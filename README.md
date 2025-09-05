@@ -32,7 +32,7 @@ Toggle showing expired debuffs with a green +seconds counter.
 Automatically update the override instead of hinting when a kept debuff vanishes.
 
 - You must be targeting mob upon the buff wearing.
-- Turning this ON/OFF the keep-buff will mimic the ON/OFF  
+- Turning this ON/OFF the keep_buff will mimic the ON/OFF  
   `//df auto on | off`
 
 ## UI TOGGLES
