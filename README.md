@@ -42,7 +42,7 @@ Toggle showing expired debuffs with a green +seconds counter.
 ## AUTO-LEARN DURATIONS
 Automatically update the override instead of hinting when a kept debuff vanishes.
 
-- You must be targeting mob upon the buff wearing.
+- You must be targeting mob upon the debuff wearing.
 - Turning this ON/OFF the keep_buff will mimic the ON/OFF  
   `//df auto on | off`
 
