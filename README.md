@@ -50,7 +50,7 @@ Automatically update the override instead of hinting when a kept debuff vanishes
 - Colored names:   `//df colors on | off`
 - Show timers:     `//df timer on | off`
 
-## TESTING (simulation; no hints, no auto)
+## TESTING (simulation)
 If testing Kaustra/Helix spell, can simulate DMG just put a number in anywhere.
 
 **Apply a test debuff to yourself:**
@@ -70,7 +70,7 @@ If testing Kaustra/Helix spell, can simulate DMG just put a number in anywhere.
 ```
 
 ## CLEAR ACTIVE DEBUFFS
-Wipe all debuffs from all targets in the UI box (no hints, no auto-update):  
+Wipe all debuffs from all targets in the UI box.
 `//df clear`
 
 ## DURATION PROFILES
