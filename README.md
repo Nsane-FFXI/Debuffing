@@ -1,4 +1,4 @@
-<img width="272" height="417" alt="df" src="https://github.com/user-attachments/assets/14a23599-88d2-421a-a3ca-49cd60f34407" />
+<img width="272" height="417" alt="df" src="https://github.com/user-attachments/assets/036fe407-b2e8-4374-8e81-2817ddabf2ea" />
 
 # Debuffing — Command Reference
 
