@@ -1,5 +1,8 @@
 <img width="272" height="417" alt="df" src="https://github.com/user-attachments/assets/036fe407-b2e8-4374-8e81-2817ddabf2ea" /> <img width="272" height="417" alt="sabo" src="https://github.com/user-attachments/assets/58545240-c492-4528-9925-2bed4e05907c" />
 
+Left Default Profile
+
+Right Custom Profile, was made for saboteur.
 
 # Debuffing — Command Reference
 
