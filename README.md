@@ -16,7 +16,7 @@ Some debuffs not shown
 **Prefix:** use `//df` or `//debuffing`. Auto-translate tokens are supported, e.g. `{Paralyze}`.
 
 ## GLOBAL DURATION OVERRIDES
-Set or remove a spell’s default duration for your character. No target required.
+Set or remove a spell’s default duration for your character.
 
 **Syntax:**  
 `//df {Spell Name}|ID <seconds | remove>`
