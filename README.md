@@ -1,8 +1,18 @@
-<img width="272" height="417" alt="df" src="https://github.com/user-attachments/assets/036fe407-b2e8-4374-8e81-2817ddabf2ea" /> <img width="272" height="417" alt="sabo" src="https://github.com/user-attachments/assets/58545240-c492-4528-9925-2bed4e05907c" />
+<img width="272" height="285" alt="0" src="https://github.com/user-attachments/assets/c8692241-9d50-458a-aef3-d81c5fd0363a" />
+<img width="272" height="284" alt="1" src="https://github.com/user-attachments/assets/f97f5717-33ba-4fe0-84cb-4c6f41885050" />
 
-Left Default Profile
+Left Default Profile, Right Custom Profile, was made for saboteur.
 
-Right Custom Profile, was made for saboteur.
+<img width="272" height="246" alt="2" src="https://github.com/user-attachments/assets/1470ccad-a055-4338-af99-5afbe55a8466" />
+
+
+<img width="272" height="227" alt="3" src="https://github.com/user-attachments/assets/12f4d834-6976-4050-ad9c-c2a4c560d81c" />
+
+<img width="271" height="190" alt="4" src="https://github.com/user-attachments/assets/f8647336-42bf-4b38-bac0-2194d5dcf5d8" />
+
+Some debuffs not shown
+
+
 
 # Debuffing — Command Reference
 
