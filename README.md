@@ -46,6 +46,17 @@ Automatically update the override instead of hinting when a kept debuff vanishes
 - Turning this ON/OFF the keep_buff will mimic the ON/OFF  
   `//df auto on | off`
 
+## AUTO-PROFILES (Per Main Job)
+Auto-load per-job overrides, and persist changes into that job’s profile.
+```
+ //df auto_profiles on | off
+```
+Behavior when ON:
+- On login and main job change:
+  - Clears current overrides.
+  - Loads profile named by the job short code (e.g., `WAR`, `WHM`). If missing, creates an empty profile with that label.
+- Manual edits and auto-learn saves write back into the active job profile.
+
 ## UI TOGGLES
 - Colored names:   `//df colors on | off`
 - Show timers:     `//df timer on | off`
