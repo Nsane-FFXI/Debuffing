@@ -1,3 +1,5 @@
+<img width="272" height="417" alt="df" src="https://github.com/user-attachments/assets/14a23599-88d2-421a-a3ca-49cd60f34407" />
+
 # Debuffing — Command Reference
 
 **Prefix:** use `//df` or `//debuffing`. Auto-translate tokens are supported, e.g. `{Paralyze}`.
