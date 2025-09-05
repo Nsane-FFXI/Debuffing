@@ -48,6 +48,7 @@ Automatically update the override instead of hinting when a kept debuff vanishes
 
 ## AUTO-PROFILES (Per Main Job)
 Auto-load per-job overrides, and persist changes into that job’s profile.
+Not on by default, once on remains on until turned off.
 ```
  //df auto_profiles on | off
 ```
