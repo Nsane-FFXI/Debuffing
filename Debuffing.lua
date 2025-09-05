@@ -1,6 +1,6 @@
 _addon.name     = 'Debuffing'
 _addon.author   = 'original: Auk, Overhauled by Nsane'
-_addon.version  = '2025.9.4'
+_addon.version  = '2025.9.5'
 _addon.commands = {'df', 'debuffing'}
 
 require('luau')
@@ -19,6 +19,7 @@ local function log(msg) windower.add_to_chat(207, ('[Debuffing] %s'):format(tost
 local defaults = {
     keep_buff_after_timer = false,
     auto_update_enabled   = false,
+    auto_profiles_enabled = false,
     colors_enabled = true,
     timers_enabled = true,
     pos   = { x = 600, y = 300 },
@@ -82,6 +83,68 @@ local JA_SPELLS = S{496,497,498,499,500,501}
 local ERASE_ABILITIES=S{2370,2571,2714,2718,2775,2831}
 local PARTIAL_ERASE_ABILITIES=S{1245,1273}
 
+-- Auto-profile state + helpers (case-insensitive keys)
+local current_profile = nil
+local function _norm_key(s) return tostring(s or ''):lower() end
+local function _job_profile_name()
+    player = windower.ffxi.get_player()
+    if not player or not player.main_job_id then return nil end
+    local j = res.jobs[player.main_job_id]
+    return j and (j.ens or j.en) or nil
+end
+local function _deepcopy(t) if type(t)~='table' then return t end local r={} for k,v in pairs(t) do r[k]=_deepcopy(v) end return r end
+local function _ensure_profile_tables()
+    duration_profiles[owner_key] = duration_profiles[owner_key] or {}
+    duration_profiles[owner_key].profiles = duration_profiles[owner_key].profiles or {}
+    durations[owner_key] = durations[owner_key] or {}
+    durations[owner_key].spells = durations[owner_key].spells or {}
+end
+local function _resolve_profile_key(name)
+    if not name then return nil end
+    _ensure_profile_tables()
+    local store = duration_profiles[owner_key].profiles
+    local want = _norm_key(name)
+    if store[want] then return want end
+    for k, v in pairs(store) do
+        local label = type(v) == 'table' and v.label or nil
+        if _norm_key(k) == want or (label and _norm_key(label) == want) then
+            return _norm_key(k)
+        end
+    end
+    return want
+end
+local function _apply_job_profile()
+    if not settings.auto_profiles_enabled then current_profile = nil; return end
+    _ensure_profile_tables()
+    local pname = _job_profile_name(); if not pname then return end
+    local key = _resolve_profile_key(pname)
+    current_profile = key
+    durations[owner_key].spells = {}
+    local store = duration_profiles[owner_key].profiles
+    store[key] = store[key] or { spells = {} }
+    store[key].label = store[key].label or pname
+    if store[key].spells then
+        durations[owner_key].spells = _deepcopy(store[key].spells)
+        log('Auto profile loaded: '..(store[key].label or key))
+    else
+        log('Auto profile new: '..(store[key].label or key))
+    end
+    config.save(duration_profiles, 'all')
+    config.save(durations, 'all')
+end
+local function _sync_profile(spell_id, secs_or_nil)
+    if not (settings.auto_profiles_enabled and current_profile) then return end
+    _ensure_profile_tables()
+    local store = duration_profiles[owner_key].profiles
+    store[current_profile] = store[current_profile] or { spells = {} }
+    if secs_or_nil == nil then
+        store[current_profile].spells[tostring(spell_id)] = nil
+    else
+        store[current_profile].spells[tostring(spell_id)] = secs_or_nil
+    end
+    config.save(duration_profiles, 'all')
+end
+
 local function color_by_element(name, spell_id)
     if not spell_id then return nil end
     local ext = EXTREMES[spell_id]
@@ -134,7 +197,6 @@ local function helix_store_dmg(tgt, effect_id, raw_param, spell_id)
     end
 end
 
--- unified removal with hint/auto-learn
 local function remove_debuff(target, effect, opts)
     opts = opts or {}
     if not (debuffed_mobs[target] and debuffed_mobs[target][effect]) then return end
@@ -159,6 +221,7 @@ local function remove_debuff(target, effect, opts)
             durations[owner_key].spells = durations[owner_key].spells or {}
             durations[owner_key].spells[tostring(sid)] = total
             config.save(durations, 'all')
+            _sync_profile(sid, total)
             log(('Auto-updated: %s %ds'):format(clean, total))
         else
             log(('Timer hint: //df {%s} %d'):format(clean, total))
@@ -227,30 +290,30 @@ local function update_box()
         local out = 'Debuffs ['..tname..']'
         if TH[tid] then out = out..'\n- '..TH[tid] end
         if debuff_table then
-            for effect, spell in pairs(debuff_table) do
-                if type(spell) == 'table' then
-                    local remain = (spell.timer or 0) - os.clock()
+            for effect, sp in pairs(debuff_table) do
+                if type(sp) == 'table' then
+                    local remain = (sp.timer or 0) - os.clock()
                     if remain >= 0 then
-                        local label = JA_SPELLS:contains(spell.name) and ja_label(spell.name, spell.tier) or colorize_name(spell.name, spell.id)
-                        if not JA_SPELLS:contains(spell.name) then
-                            if is_kaustra(spell) and spell.kaustra_dmg_str then label = cs(C.dark, spell.kaustra_dmg_str)..' '..label end
-                            if is_helix(spell)  and spell.helix_dmg_str  then local rgb = spell.helix_rgb or helix_rgb(spell.id); label = cs(rgb, spell.helix_dmg_str)..' '..label end
+                        local label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
+                        if not JA_SPELLS:contains(sp.name) then
+                            if is_kaustra(sp) and sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
+                            if is_helix(sp)  and sp.helix_dmg_str  then local rgb = sp.helix_rgb or helix_rgb(sp.id); label = cs(rgb, sp.helix_dmg_str)..' '..label end
                         end
-                        out = out..'\n- '..label..fmt_timer(spell, remain, false)
+                        out = out..'\n- '..label..fmt_timer(sp, remain, false)
                     elseif settings.keep_buff_after_timer then
-                        if not spell.expired_at then spell.expired_at = os.clock() end
-                        local label = JA_SPELLS:contains(spell.name) and ja_label(spell.name, spell.tier) or colorize_name(spell.name, spell.id)
-                        if not JA_SPELLS:contains(spell.name) then
-                            if is_kaustra(spell) and spell.kaustra_dmg_str then label = cs(C.dark, spell.kaustra_dmg_str)..' '..label end
-                            if is_helix(spell)  and spell.helix_dmg_str  then local rgb = spell.helix_rgb or helix_rgb(spell.id); label = cs(rgb, spell.helix_dmg_str)..' '..label end
+                        if not sp.expired_at then sp.expired_at = os.clock() end
+                        local label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
+                        if not JA_SPELLS:contains(sp.name) then
+                            if is_kaustra(sp) and sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
+                            if is_helix(sp)  and sp.helix_dmg_str  then local rgb = sp.helix_rgb or helix_rgb(sp.id); label = cs(rgb, sp.helix_dmg_str)..' '..label end
                         end
-                        out = out..'\n- '..label..fmt_timer(spell, 0, true)
+                        out = out..'\n- '..label..fmt_timer(sp, 0, true)
                     else
                         remove_debuff(tid, effect)
                     end
-                elseif spell then
-                    local s = res.spells[spell]; local sname = s and s.en or ('ID '..tostring(spell))
-                    out = out..'\n- '..colorize_name(sname, spell)
+                elseif sp then
+                    local s = res.spells[sp]; local sname = s and s.en or ('ID '..tostring(sp))
+                    out = out..'\n- '..colorize_name(sname, sp)
                 end
             end
         end
@@ -644,13 +707,35 @@ windower.register_event('load','login', function()
 
     duration_profiles[owner_key] = duration_profiles[owner_key] or {}
     duration_profiles[owner_key].profiles = duration_profiles[owner_key].profiles or {}
-    for _, pdata in pairs(duration_profiles[owner_key].profiles) do
-        if type(pdata) == 'table' and pdata.global and not pdata.spells then pdata.spells = pdata.global; pdata.global = nil end
+
+    -- normalize profiles to lowercase keys, preserve display label, migrate global->spells
+    do
+        local store = duration_profiles[owner_key].profiles or {}
+        local new_store = {}
+        for k, v in pairs(store) do
+            local nk = _norm_key(k)
+            local entry = type(v) == 'table' and v or {}
+            entry.spells = entry.spells or entry.global or {}
+            entry.global = nil
+            entry.label = entry.label or k
+            if not new_store[nk] then
+                new_store[nk] = entry
+            else
+                for sid,secs in pairs(entry.spells or {}) do new_store[nk].spells[sid] = secs end
+                if not new_store[nk].label then new_store[nk].label = entry.label end
+            end
+        end
+        duration_profiles[owner_key].profiles = new_store
+        config.save(duration_profiles, 'all')
     end
-    config.save(duration_profiles, 'all')
+
+    if settings.auto_profiles_enabled then _apply_job_profile() end
 end)
 
--- commands
+windower.register_event('job change', function()
+    if settings.auto_profiles_enabled then _apply_job_profile() end
+end)
+
 windower.register_event('addon command', function(...)
     local commands = T{...}
     player = windower.ffxi.get_player()
@@ -677,7 +762,6 @@ windower.register_event('addon command', function(...)
         config.save(settings); log(key..' is now: '..tostring(settings[key]))
     end
 
-    local function deepcopy(t) if type(t)~='table' then return t end local r={} for k,v in pairs(t) do r[k]=deepcopy(v) end return r end
     local function normalize_name(n) n=tostring(n or ''):gsub('^%s+',''):gsub('%s+$',''); return n~='' and n or nil end
 
     local function resolve_spell_id(raw)
@@ -706,6 +790,7 @@ windower.register_event('addon command', function(...)
         log('Invalid command:')
         log('//df|debuffing colors|timer [on|off]')
         log('//df|debuffing auto [on|off]')
+        log('//df|debuffing auto_profiles [on|off]')
         log('//df|debuffing keep_buff [on|off]')
         log('//df|debuffing {Spell Name}|ID [seconds|remove]')
         log('//df save <name> | //df load <name> | //df list | //df delete <name>')
@@ -731,6 +816,11 @@ windower.register_event('addon command', function(...)
         log('Auto update is now: '..tostring(settings.auto_update_enabled))
         log('Keep buff after timer is now: '..tostring(settings.keep_buff_after_timer))
 
+    elseif cmd == 'auto_profiles' then
+        local before = settings.auto_profiles_enabled
+        set_toggle('auto_profiles_enabled', commands[2])
+        if settings.auto_profiles_enabled and not before then _apply_job_profile() end
+
     elseif cmd == 'colors' then
         set_toggle('colors_enabled', commands[2])
 
@@ -743,34 +833,41 @@ windower.register_event('addon command', function(...)
 
     elseif cmd == 'save' then
         local name = normalize_name(table.concat(commands, ' ', 2)); if not name then return log('Usage: //df save <name>') end
-        duration_profiles[owner_key] = duration_profiles[owner_key] or {}; duration_profiles[owner_key].profiles = duration_profiles[owner_key].profiles or {}
+        _ensure_profile_tables()
         local store = duration_profiles[owner_key].profiles
-        store[name] = { spells = deepcopy(durations[owner_key].spells or {}) }
+        local key = _resolve_profile_key(name)
+        store[key] = { label = name, spells = _deepcopy(durations[owner_key].spells or {}) }
         config.save(duration_profiles, 'all')
-        local cnt = 0 for _ in pairs(store[name].spells or {}) do cnt = cnt + 1 end
-        log(('Saved %s profile with (%d save durations.)'):format(name, cnt))
+        local cnt = 0 for _ in pairs(store[key].spells or {}) do cnt = cnt + 1 end
+        log(('Saved %s profile with %d entries.'):format(store[key].label or key, cnt))
 
     elseif cmd == 'load' then
         local name = normalize_name(table.concat(commands, ' ', 2)); if not name then return log('Usage: //df load <name>') end
-        local store = (duration_profiles[owner_key] and duration_profiles[owner_key].profiles) or {}
-        if not store[name] then return log('Profile "'..name..'" not found.') end
-        durations[owner_key].spells = deepcopy(store[name].spells or {}); config.save(durations, 'all'); log('Loaded '..name..' profile.')
+        _ensure_profile_tables()
+        local store = duration_profiles[owner_key].profiles
+        local key = _resolve_profile_key(name)
+        if not store[key] then return log('Profile "'..name..'" not found.') end
+        durations[owner_key].spells = _deepcopy(store[key].spells or {}); config.save(durations, 'all')
+        log('Loaded '..(store[key].label or key)..' profile.')
 
     elseif cmd == 'list' then
-        duration_profiles[owner_key] = duration_profiles[owner_key] or {}; local store = duration_profiles[owner_key].profiles or {}
+        _ensure_profile_tables()
+        local store = duration_profiles[owner_key].profiles
         local count = 0
-        for pname, pdata in pairs(store) do
+        for k, pdata in pairs(store) do
             local n = 0 for _ in pairs((pdata and pdata.spells) or {}) do n = n + 1 end
-            log(('%s (%d)'):format(pname, n)); count = count + 1
+            log(('%s (%d)'):format((pdata and pdata.label) or k, n)); count = count + 1
         end
         if count == 0 then log('No profiles saved') end
 
     elseif cmd == 'delete' then
         local name = normalize_name(table.concat(commands, ' ', 2)); if not name then return log('Usage: //df delete <name>') end
-        duration_profiles[owner_key] = duration_profiles[owner_key] or {}; duration_profiles[owner_key].profiles = duration_profiles[owner_key].profiles or {}
+        _ensure_profile_tables()
         local store = duration_profiles[owner_key].profiles
-        if not store[name] then return log('Profile '..name..' not found') end
-        store[name] = nil; config.save(duration_profiles, 'all'); log('Deleted '..name..' profile.')
+        local key = _resolve_profile_key(name)
+        if not store[key] then return log('Profile '..name..' not found') end
+        local label = store[key].label or key
+        store[key] = nil; config.save(duration_profiles, 'all'); log('Deleted '..label..' profile.')
 
     elseif cmd == 'test' then
         if tostring(commands[2] or ''):lower() == 'clear' then
@@ -854,9 +951,13 @@ windower.register_event('addon command', function(...)
         local sid, sname = resolve_spell_id(raw_query); if not sid then log('Spell not found: incorrect spell name/id or outdated resources'); return end
         local last = tostring(commands[#commands] or ''):lower(); local secs = tonumber(last)
         if secs and secs >= 0 then
-            durations[owner_key].spells[tostring(sid)] = secs; config.save(durations, 'all'); log('Global duration for '..sname..' set to '..secs..' seconds')
+            durations[owner_key].spells[tostring(sid)] = secs; config.save(durations, 'all')
+            _sync_profile(sid, secs)
+            log('Global duration for '..sname..' set to '..secs..' seconds')
         elseif last == 'remove' then
-            durations[owner_key].spells[tostring(sid)] = nil; config.save(durations, 'all'); log('Global duration for '..sname..' removed')
+            durations[owner_key].spells[tostring(sid)] = nil; config.save(durations, 'all')
+            _sync_profile(sid, nil)
+            log('Global duration for '..sname..' removed')
         else
             log('Invalid time. Use a non-negative number or "remove".')
         end
