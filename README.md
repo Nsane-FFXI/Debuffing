@@ -56,7 +56,7 @@ Behavior when ON:
 - On login and main job change:
   - Clears current overrides.
   - Loads profile named by the job short code (e.g., `WAR`, `WHM`). If missing, creates an empty profile with that label.
-- Manual edits and auto-learns saves to job job profile automatically.
+- Manual edits and auto-learns saves to job profile automatically.
 
 ## UI TOGGLES
 - Colored names:   `//df colors on | off`
