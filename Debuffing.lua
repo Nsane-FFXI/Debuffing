@@ -212,7 +212,7 @@ local function remove_debuff(target, effect, opts)
 
         local up    = math.max(0, os.clock() - e.expired_at)
         local base  = tonumber(e.base_dur or 0) or 0
-        local total = math.max(0, math.floor(base + up + 0.5)) + 1
+        local total = math.max(0, math.floor(base + up + 0.5))
         local clean = base_name((e.name or ''):gsub('\\cs%(%d+,%d+,%d+%)',''):gsub('\\cr',''))
         local sid   = tonumber(e.id or 0)
 
