@@ -105,4 +105,3 @@ Remove all global duration overrides for your current character (profiles untouc
 - Files:
   - Overrides: `addons/Debuffing/data/durations.xml`
   - Profiles:  `addons/Debuffing/data/duration_profiles.xml`
-- Timer learning adds +1 second when saving or hinting.
