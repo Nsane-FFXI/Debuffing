@@ -36,7 +36,6 @@ Toggle showing expired debuffs with a green +seconds counter.
 - When the debuff finally disappears:
   - If auto is ON: saves the new total duration automatically.
   - If auto is OFF: prints a Timer hint: `//df {Spell} <seconds>`.
-- The total includes +1 second.
 - No hint or auto-update if the mob dies prior to timer disappearing off screen.
 
 ## AUTO-LEARN DURATIONS
