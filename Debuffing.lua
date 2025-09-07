@@ -1,6 +1,6 @@
 _addon.name     = 'Debuffing'
 _addon.author   = 'original: Auk, Overhauled by Nsane'
-_addon.version  = '2025.9.5'
+_addon.version  = '2025.9.7'
 _addon.commands = {'df', 'debuffing'}
 
 require('luau')
@@ -22,15 +22,31 @@ local defaults = {
     auto_profiles_enabled = false,
     colors_enabled = true,
     timers_enabled = true,
+    weapons = true,
     pos   = { x = 600, y = 300 },
     text  = { font = 'Consolas', size = 12 },
     flags = { bold = false, draggable = true },
     bg    = { alpha = 255 },
 }
+
+local CREATE_FILE = nil
 local settings = config.load(defaults)
 
-local default_durations_xml = [[<?xml version="1.0"?><settings></settings>]]
-local default_profiles_xml  = [[<?xml version="1.0"?><settings></settings>]]
+local function user_dir() return 'data\\'..(owner_key or 'unknown')..'\\' end
+local function path_settings() return user_dir()..'settings.xml' end
+local function path_durations() return user_dir()..'durations.xml' end
+local function path_profiles() return user_dir()..'duration_profiles.xml' end
+local function path_creates() return user_dir()..'creates.xml' end
+
+local function migrate_legacy(src, dst)
+    if file.exists(src) and not file.exists(dst) then
+        if not windower.dir_exists(windower.addon_path..user_dir()) then windower.create_dir(windower.addon_path..user_dir()) end
+        local fh_src = file.new(src, true)
+        local data = fh_src:read()
+        local fh_dst = file.new(dst, true)
+        fh_dst:write(data or '')
+    end
+end
 
 local C = {
     dark={135,135,135}, earth={255,255,28}, ice={0,255,255}, light={255,255,255},
@@ -70,12 +86,17 @@ end
 local frame_time, debuffed_mobs, TH, step_duration = 0, {}, {}, {}
 local durations, duration_profiles = {}, {}
 
+local creates = {}
+local last_tp_by_id = {}
+local ws_links = {}
+
 local debuffs_map = {}
 local absorb_map = {
   [242]={effect=242,duration=90},[266]={effect=266,duration=90},[267]={effect=267,duration=90},[268]={effect=268,duration=90},
   [269]={effect=269,duration=90},[270]={effect=270,duration=90},[271]={effect=271,duration=90},[272]={effect=272,duration=90}
 }
 local ABSORB_IDS=(function() local s=S{} for id in pairs(absorb_map) do s[id]=true end return s end)()
+local BUFF_ALIASES = {paralyze = 'Paralysis', petrify  = 'Petrification'}
 local ja_map = { [150]={effect=149,duration=90}, [170]={effect=149,duration=90} }
 local EXTREMES = { [502]={effect=23,element=7,duration=100}, [503]={effect=142,element=7,duration=180} }
 local BloodPact_map = { [580]={duration=90},[585]={duration=90},[611]={duration=90},[617]={duration=180},[633]={duration=15},[657]={duration=60},[963]={duration=90},[966]={duration=180} }
@@ -83,7 +104,6 @@ local JA_SPELLS = S{496,497,498,499,500,501}
 local ERASE_ABILITIES=S{2370,2571,2714,2718,2775,2831}
 local PARTIAL_ERASE_ABILITIES=S{1245,1273}
 
--- Auto-profile state + helpers (case-insensitive keys)
 local current_profile = nil
 local function _norm_key(s) return tostring(s or ''):lower() end
 local function _job_profile_name()
@@ -163,7 +183,6 @@ local function tlen(t) local n=0; for _ in pairs(t or {}) do n=n+1 end; return n
 local function is_threnody_spell(id) local s=res.spells[id]; return s and s.en and s.en:find('Threnody') end
 local function is_enemy(id) if not id then return false end local m=windower.ffxi.get_mob_by_id(id) return m and m.is_npc and (m.spawn_type==16 or m.claim_id~=0) end
 
--- Kaustra helpers
 local function is_kaustra(entry)
     if not entry then return false end
     if tonumber(entry.id) == 502 then return true end
@@ -177,7 +196,6 @@ local function kaustra_store_dmg(tgt, effect_id, raw_param)
     if debuffed_mobs[tgt] and debuffed_mobs[tgt][effect_id] then debuffed_mobs[tgt][effect_id].kaustra_dmg_str = label end
 end
 
--- Helix helpers
 local function is_helix_id(id) local s = res.spells[id]; return s and s.en and s.en:lower():find('helix') end
 local function is_helix(entry)
     if not entry then return false end
@@ -189,7 +207,8 @@ local function helix_store_dmg(tgt, effect_id, raw_param, spell_id)
     local dmg = tonumber(raw_param) or 0
     if dmg <= 0 then return end
     local capped = math.min(dmg, 10000)
-    local n = math.floor(capped/100 + 0.5) * 100
+    local a = math.floor(capped/100 + 0.5) * 100
+    local n = a
     local label = (n >= 1000) and ((math.floor(n/1000) == n/1000) and string.format('%.0fk', n/1000) or string.format('%.1fk', n/1000)) or tostring(n)
     if debuffed_mobs[tgt] and debuffed_mobs[tgt][effect_id] then
         debuffed_mobs[tgt][effect_id].helix_dmg_str = label
@@ -229,6 +248,16 @@ local function remove_debuff(target, effect, opts)
     end
 
     maybe_hint_or_auto()
+
+    if ws_links[target] and ws_links[target][effect] then
+        for _, key in ipairs(ws_links[target][effect]) do
+            if debuffed_mobs[target] then debuffed_mobs[target][key] = nil end
+        end
+        ws_links[target][effect] = nil
+    end
+
+    if e and e.shot then e.shot = nil end
+
     debuffed_mobs[target][effect] = nil
 end
 
@@ -236,9 +265,19 @@ local function clear_target_debuffs(tid, opts)
     if not debuffed_mobs[tid] then return end
     for eff,_ in pairs(debuffed_mobs[tid]) do remove_debuff(tid, eff, opts) end
     debuffed_mobs[tid] = nil
+    if ws_links[tid] then ws_links[tid] = nil end
 end
 
-local box = texts.new('${current_string}', settings); box:show()
+local function purge_ws_links(target_id, effect_id)
+    if ws_links[target_id] and ws_links[target_id][effect_id] then
+        for _, key in ipairs(ws_links[target_id][effect_id]) do
+            if debuffed_mobs[target_id] then debuffed_mobs[target_id][key] = nil end
+        end
+        ws_links[target_id][effect_id] = nil
+    end
+end
+
+local box = texts.new('${current_string}', defaults); box:show()
 
 local function ja_label(spell_id, tier)
     local E = {
@@ -250,6 +289,27 @@ local function ja_label(spell_id, tier)
     local pct = math.max(1, math.min(5, tonumber(tier) or 1)) * 5
     return settings.colors_enabled and (cs(e[2], e[1])..cs(C.light, ' +')..cs(C.light, tostring(pct)..'%'))
            or string.format('%s Damage + %d%%', e[1], pct)
+end
+
+local function ws_rgb(ws_id)
+    local ws = res.weapon_skills[ws_id]; local el = ws and ws.element
+    return el and ELEMENT_RGB[el] or C.light
+end
+local function buff_rgb(buff_id)
+    local b = res.buffs[buff_id]
+    local el = b and b.element
+    return (el and ELEMENT_RGB[el]) or C.light
+end
+local function ws_buff_label(ws_id, buff_id)
+    local ws_name   = res.weapon_skills[ws_id] and res.weapon_skills[ws_id].en or ('WS '..tostring(ws_id))
+    local buff_name = res.buffs[buff_id] and res.buffs[buff_id].en or ('Buff '..tostring(buff_id))
+    local a = settings.colors_enabled and cs(ws_rgb(ws_id), ws_name) or ws_name
+    local b = settings.colors_enabled and ('('..cs(buff_rgb(buff_id), buff_name)..')') or ('('..buff_name..')')
+    return a..' '..b
+end
+local function tp_tier(tp_val)
+    local tp = tonumber(tp_val or 0) or 0
+    if tp >= 3000 then return 3000 elseif tp >= 2000 then return 2000 else return 1000 end
 end
 
 local function update_box()
@@ -286,30 +346,72 @@ local function update_box()
     local target = windower.ffxi.get_mob_by_target('st') or windower.ffxi.get_mob_by_target('t')
 
     local function render_target(tid, tname)
+        local now = os.clock()
         local debuff_table = debuffed_mobs[tid]
         local out = 'Debuffs ['..tname..']'
         if TH[tid] then out = out..'\n- '..TH[tid] end
+
         if debuff_table then
-            for effect, sp in pairs(debuff_table) do
+            local keys = {}
+            for effect, sp in pairs(debuff_table) do keys[#keys+1] = {effect=effect, sp=sp} end
+            table.sort(keys, function(a,b)
+                local A = a.sp and a.sp.timer and (a.sp.timer - now) or math.huge
+                local B = b.sp and b.sp.timer and (b.sp.timer - now) or math.huge
+                if A ~= B then return A < B end
+                local an = (a.sp and a.sp.name) or ''
+                local bn = (b.sp and b.sp.name) or ''
+                return an < bn
+            end)
+
+            for _,k in ipairs(keys) do
+                local effect, sp = k.effect, k.sp
                 if type(sp) == 'table' then
-                    local remain = (sp.timer or 0) - os.clock()
-                    if remain >= 0 then
-                        local label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
-                        if not JA_SPELLS:contains(sp.name) then
-                            if is_kaustra(sp) and sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
-                            if is_helix(sp)  and sp.helix_dmg_str  then local rgb = sp.helix_rgb or helix_rgb(sp.id); label = cs(rgb, sp.helix_dmg_str)..' '..label end
-                        end
-                        out = out..'\n- '..label..fmt_timer(sp, remain, false)
-                    elseif settings.keep_buff_after_timer then
-                        if not sp.expired_at then sp.expired_at = os.clock() end
-                        local label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
-                        if not JA_SPELLS:contains(sp.name) then
-                            if is_kaustra(sp) and sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
-                            if is_helix(sp)  and sp.helix_dmg_str  then local rgb = sp.helix_rgb or helix_rgb(sp.id); label = cs(rgb, sp.helix_dmg_str)..' '..label end
-                        end
-                        out = out..'\n- '..label..fmt_timer(sp, 0, true)
+                    if sp.ws_display and not settings.weapons then
                     else
-                        remove_debuff(tid, effect)
+                        local remain = (sp.timer or 0) - now
+                        if remain >= 0 then
+                            local label
+                            if sp.ws_display then
+                                label = sp.name
+                            else
+                                label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
+                                if not JA_SPELLS:contains(sp.name) then
+                                    if is_kaustra(sp) then
+                                        if sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
+                                    elseif is_helix(sp) then
+                                        if sp.helix_dmg_str then
+                                            local rgb = sp.helix_rgb or helix_rgb(sp.id)
+                                            label = cs(rgb, sp.helix_dmg_str)..' '..label
+                                        end
+                                    end
+                                end
+                            end
+                            out = out..'\n- '..label..fmt_timer(sp, remain, false)
+                        elseif settings.keep_buff_after_timer then
+                            if sp.ws_display and not settings.weapons then
+                            else
+                                if not sp.expired_at then sp.expired_at = now end
+                                local label
+                                if sp.ws_display then
+                                    label = sp.name
+                                else
+                                    label = JA_SPELLS:contains(sp.name) and ja_label(sp.name, sp.tier) or colorize_name(sp.name, sp.id)
+                                    if not JA_SPELLS:contains(sp.name) then
+                                        if is_kaustra(sp) then
+                                            if sp.kaustra_dmg_str then label = cs(C.dark, sp.kaustra_dmg_str)..' '..label end
+                                        elseif is_helix(sp) then
+                                            if sp.helix_dmg_str then
+                                                local rgb = sp.helix_rgb or helix_rgb(sp.id)
+                                                label = cs(rgb, sp.helix_dmg_str)..' '..label
+                                            end
+                                        end
+                                    end
+                                end
+                                out = out..'\n- '..label..fmt_timer(sp, 0, true)
+                            end
+                        else
+                            remove_debuff(tid, effect)
+                        end
                     end
                 elseif sp then
                     local s = res.spells[sp]; local sname = s and s.en or ('ID '..tostring(sp))
@@ -317,7 +419,8 @@ local function update_box()
                 end
             end
         end
-        return out
+        local has_lines = out:find('\n%- ')
+        return has_lines and out or ''
     end
 
     if target and is_enemy(target.id) then
@@ -349,17 +452,43 @@ local function handle_overwrites(target, new_spell_id, overwrites_list)
 end
 
 local function apply_debuff(target, effect, spell_id, duration)
+    purge_ws_links(target, effect)
+
     if not debuffed_mobs[target] then debuffed_mobs[target] = {} end
+
     if is_threnody_spell(spell_id) then
         for eff, entry in pairs(debuffed_mobs[target]) do
-            if type(entry) == 'table' and entry.name and entry.name:find('Threnody') then remove_debuff(target, eff) end
+            if type(entry) == 'table' and entry.name and entry.name:find('Threnody') then
+                remove_debuff(target, eff)
+            end
         end
     end
+
     local overwrites = (res.spells[spell_id] and res.spells[spell_id].overwrites) or {}
     if not handle_overwrites(target, spell_id, overwrites) then return end
+
     local name = (others and others.blue_magic and others.blue_magic[spell_id] and others.blue_magic[spell_id].en)
               or (res.spells[spell_id] and res.spells[spell_id].en) or 'Unknown'
-    debuffed_mobs[target][effect] = { id = spell_id, name = name, timer = os.clock() + (duration or 0), base_dur = tonumber(duration or 0) or 0, expired_at = nil }
+
+    local new_exp = os.clock() + (duration or 0)
+    local prev = debuffed_mobs[target][effect]
+    if prev and type(prev) == 'table' and prev.timer and prev.timer > new_exp then
+        prev.id = spell_id
+        prev.name = (debuffs_map[spell_id] and type(debuffs_map[spell_id].effect) == 'table')
+                    and (name..' ('..res.buffs[effect].en..')') or name
+        prev.base_dur = prev.base_dur or tonumber(duration or 0) or 0
+        prev.expired_at = nil
+        return
+    end
+
+    debuffed_mobs[target][effect] = {
+        id        = spell_id,
+        name      = name,
+        timer     = new_exp,
+        base_dur  = tonumber(duration or 0) or 0,
+        expired_at = nil,
+    }
+
     if debuffs_map[spell_id] and type(debuffs_map[spell_id].effect) == 'table' then
         debuffed_mobs[target][effect].name = name..' ('..res.buffs[effect].en..')'
     end
@@ -367,10 +496,11 @@ end
 
 local function apply_ja_spells(target, spell_id)
     if not debuffed_mobs[target] then debuffed_mobs[target] = {} end
-    local current = debuffed_mobs[target][1000]
+    local key = 'ja:'..tostring(spell_id)
+    local current = debuffed_mobs[target][key]
     local tier = (current and current.name == spell_id) and math.min((current.tier or 1) + 1, 5) or 1
     local timer = (current and current.name == spell_id) and current.timer or (os.clock() + 60)
-    debuffed_mobs[target][1000] = { id = spell_id, name = spell_id, tier = tier, timer = timer, base_dur = 60, expired_at = nil }
+    debuffed_mobs[target][key] = { id = spell_id, name = spell_id, tier = tier, timer = timer, base_dur = 60, expired_at = nil }
 end
 
 local function get_pet_owner(id)
@@ -399,50 +529,158 @@ local function is_ally(id)
     return false
 end
 
+local function _trim(s) return (s or ''):match('^%s*(.-)%s*$') end
+local function _auto(s) return (s and s ~= '' and windower and windower.convert_auto_trans) and windower.convert_auto_trans(s) or s end
+local function _unwrap_token(s)
+    s = _trim(s or ''); if s == '' then return s end
+    local first,last = s:sub(1,1), s:sub(-1); local pairs = {['\"']='\"', ['{']='}', ['[']=']', ['<']='>'}
+    if pairs[first] and last == pairs[first] then return s:sub(2, -2) end
+    return s
+end
+local function _norm(s) return (_auto(_unwrap_token(s or '')):lower():gsub('[%s%p]+','')) end
+
+local function resolve_ws_id(raw)
+    local q = _auto(_unwrap_token(raw)); if not q or q == '' then return nil,nil end
+    local n = tonumber(q)
+    if n and res.weapon_skills[n] then return n, res.weapon_skills[n].en end
+    local qn = _norm(q)
+    local best, bid, bname = -1, nil, nil
+    for id, ws in pairs(res.weapon_skills) do
+        local name = ws and ws.en
+        local a = _auto(name or ''); local an = _norm(a)
+        local sc = (a:lower()==q:lower()) and 4000
+                or (an==qn) and 3000
+                or (a:lower():find(q:lower(),1,true) and 1500)
+                or (an:find(qn,1,true) and 1400)
+                or -1
+        if sc > best then best, bid, bname = sc, id, name end
+    end
+    return bid, bname
+end
+local function resolve_buff_id(raw)
+    local q = _auto(_unwrap_token(raw)); if not q or q == '' then return nil,nil end
+    local n = tonumber(q)
+    if n and res.buffs[n] then return n, res.buffs[n].en end
+    local qn = _norm(q)
+    local best, bid, bname = -1, nil, nil
+    for id, b in pairs(res.buffs) do
+        local name = b and b.en
+        local a = _auto(name or ''); local an = _norm(a)
+        local sc = (a:lower()==q:lower()) and 4000
+                or (an==qn) and 3000
+                or (a:lower():find(q:lower(),1,true) and 1500)
+                or (an:find(qn,1,true) and 1400)
+                or -1
+        if sc > best then best, bid, bname = sc, id, name end
+    end
+    return bid, bname
+end
+
+local function apply_create(actor_id, target_id, ws_id, opts)
+    opts = opts or {}
+
+    local def = creates[tostring(ws_id)]
+    if not (def and def.buff_id and def.durs) then return end
+
+    local sim_ok = simulation_mode and player and target_id == player.id
+    if not is_enemy(target_id) and not sim_ok and not opts.force then return end
+
+    local effect = def.buff_id
+
+    if debuffed_mobs[target_id]
+       and debuffed_mobs[target_id][effect]
+       and type(debuffed_mobs[target_id][effect]) == 'table'
+       and not debuffed_mobs[target_id][effect].ws_display then
+        return
+    end
+
+    local tp = last_tp_by_id[actor_id] or 0
+    local tier = tp_tier(tp)
+    local dur = (tier == 3000 and def.durs[3000])
+             or (tier == 2000 and def.durs[2000])
+             or def.durs[1000] or 0
+
+    debuffed_mobs[target_id] = debuffed_mobs[target_id] or {}
+    local expires = os.clock() + dur
+    local key = ('ws:%d:%d'):format(ws_id, effect)
+
+    debuffed_mobs[target_id][key] = {
+        id         = 0,
+        name       = ws_buff_label(ws_id, effect),
+        timer      = expires,
+        base_dur   = dur,
+        expired_at = nil,
+        ws_display = true,
+        link_target = effect,
+    }
+
+    ws_links[target_id] = ws_links[target_id] or {}
+    ws_links[target_id][effect] = ws_links[target_id][effect] or {}
+    table.insert(ws_links[target_id][effect], key)
+end
+
+local function tag_once(entry, label, rgb)
+    entry.shot = (entry.shot or 0) + 1
+    if entry.shot == 1 then
+        entry.name = entry.name .. (settings.colors_enabled and (' ('..cs(rgb,label)..')') or (' ('..label..')'))
+    elseif entry.shot == 2 then
+        entry.name = entry.name .. (settings.colors_enabled and cs(rgb,'x2') or 'x2')
+    else
+        entry.shot = 2
+    end
+end
+
 local function handle_shot(target, shot)
     if not debuffed_mobs[target] then return true end
-    local function tag(label, rgb) return settings.colors_enabled and (' ('..cs(rgb, label)..')') or (' ('..label..')') end
-    local function mult2(rgb) return settings.colors_enabled and cs(rgb, 'x2') or 'x2' end
     if shot == 125 and debuffed_mobs[target][128] then
-        local s = debuffed_mobs[target][128]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Fire Shot',C.fire) or mult2(C.fire))
+        local s = debuffed_mobs[target][128]; tag_once(s, 'Fire Shot', C.fire)
     elseif shot == 126 then
         if debuffed_mobs[target][4] and T{58,80}:contains(debuffed_mobs[target][4].id) and not debuffed_mobs[target][4].shot then
-            local s = debuffed_mobs[target][4]; s.shot = 1; s.name = s.name .. tag('Ice Shot', C.ice)
+            local s = debuffed_mobs[target][4]; tag_once(s, 'Ice Shot', C.ice)
         end
         if debuffed_mobs[target][129] then
-            local s = debuffed_mobs[target][129]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Ice Shot',C.ice) or mult2(C.ice))
+            local s = debuffed_mobs[target][129]; tag_once(s, 'Ice Shot', C.ice)
         end
     elseif shot == 127 and debuffed_mobs[target][130] then
-        local s = debuffed_mobs[target][130]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Wind Shot',C.wind) or mult2(C.wind))
+        local s = debuffed_mobs[target][130]; tag_once(s, 'Wind Shot', C.wind)
     elseif shot == 128 then
         if debuffed_mobs[target][13] and T{56,344,345}:contains(debuffed_mobs[target][13].id) and not debuffed_mobs[target][13].shot then
-            local s = debuffed_mobs[target][13]; s.shot = 1; s.name = s.name .. tag('Earth Shot', C.earth)
+            local s = debuffed_mobs[target][13]; tag_once(s, 'Earth Shot', C.earth)
         end
         if debuffed_mobs[target][131] then
-            local s = debuffed_mobs[target][131]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Earth Shot',C.earth) or mult2(C.earth))
+            local s = debuffed_mobs[target][131]; tag_once(s, 'Earth Shot', C.earth)
         end
     elseif shot == 129 and debuffed_mobs[target][132] then
-        local s = debuffed_mobs[target][132]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Thunder Shot',C.lightning) or mult2(C.lightning))
+        local s = debuffed_mobs[target][132]; tag_once(s, 'Thunder Shot', C.lightning)
     elseif shot == 130 then
         if debuffed_mobs[target][3] and T{220,221}:contains(debuffed_mobs[target][3].id) and not debuffed_mobs[target][3].shot then
-            local s = debuffed_mobs[target][3]; s.shot = 1; s.name = s.name .. tag('Water Shot', C.water)
+            local s = debuffed_mobs[target][3]; tag_once(s, 'Water Shot', C.water)
         end
         if debuffed_mobs[target][133] then
-            local s = debuffed_mobs[target][133]; s.shot = (s.shot or 0) + 1; s.name = s.name .. (s.shot==1 and tag('Water Shot',C.water) or mult2(C.water))
+            local s = debuffed_mobs[target][133]; tag_once(s, 'Water Shot', C.water)
         end
     elseif shot == 131 and debuffed_mobs[target][134] and not debuffed_mobs[target][134].shot then
-        local s = debuffed_mobs[target][134]; s.shot = 1; s.name = s.name .. tag('Light Shot', C.light)
+        local s = debuffed_mobs[target][134]; tag_once(s, 'Light Shot', C.light)
     elseif shot == 132 then
         if debuffed_mobs[target][5] and T{254,276,347,348}:contains(debuffed_mobs[target][5].id) and not debuffed_mobs[target][5].shot then
-            local s = debuffed_mobs[target][5]; s.shot = 1; s.name = s.name .. tag('Dark Shot', C.dark)
+            local s = debuffed_mobs[target][5]; tag_once(s, 'Dark Shot', C.dark)
         end
         if debuffed_mobs[target][135] and not debuffed_mobs[target][135].shot then
-            local s = debuffed_mobs[target][135]; s.shot = 1; s.name = s.name .. tag('Dark Shot', C.dark)
+            local s = debuffed_mobs[target][135]; tag_once(s, 'Dark Shot', C.dark)
         end
     end
 end
 
 local function inc_action(act)
+    if act.category == 3 and is_ally(act.actor_id) then
+        for i = 1, #act.targets do
+            local tgt = act.targets[i].id
+            if is_enemy(tgt) then
+                apply_create(act.actor_id, tgt, act.param)
+            end
+        end
+    end
+
     if act.category == 4 then
         if act.param == 260 and act.targets[1].actions[1].message == 342 then
             local effect = act.targets[1].actions[1].param
@@ -632,39 +870,46 @@ local function inc_action(act)
     end
 end
 
+local CLEAR_MSG = S{6,20,113,406,605,646}
+local WEAR_MSG  = S{204,206}
+
+local function _rm(tid, eff)
+    remove_debuff(tid, eff)
+    purge_ws_links(tid, eff)
+    if step_duration[tid] then step_duration[tid][eff] = 0 end
+end
+
 local function inc_action_message(arr)
-    if T{6,20,113,406,605,646}:contains(arr.message_id) then
-        if is_enemy(arr.target_id) then
-            clear_target_debuffs(arr.target_id, { no_hint = true })
-            TH[arr.target_id] = nil
-        end
-    elseif T{204,206}:contains(arr.message_id) then
-        if is_enemy(arr.target_id) and debuffed_mobs[arr.target_id] then
-            local pid = arr.param_1
-            if arr.message_id == 206 then
-                if     pid == 136 then remove_debuff(arr.target_id,136); remove_debuff(arr.target_id,266); if step_duration[arr.target_id] then step_duration[arr.target_id][266]=0 end
-                elseif pid == 137 then remove_debuff(arr.target_id,137); remove_debuff(arr.target_id,267); if step_duration[arr.target_id] then step_duration[arr.target_id][267]=0 end
-                elseif pid == 138 then remove_debuff(arr.target_id,138); remove_debuff(arr.target_id,268); if step_duration[arr.target_id] then step_duration[arr.target_id][268]=0 end
-                elseif pid == 139 then remove_debuff(arr.target_id,139); remove_debuff(arr.target_id,269); if step_duration[arr.target_id] then step_duration[arr.target_id][269]=0 end
-                elseif pid == 140 then remove_debuff(arr.target_id,140); remove_debuff(arr.target_id,270); if step_duration[arr.target_id] then step_duration[arr.target_id][270]=0 end
-                elseif pid == 141 then remove_debuff(arr.target_id,141); remove_debuff(arr.target_id,271); if step_duration[arr.target_id] then step_duration[arr.target_id][271]=0 end
-                elseif pid == 142 then remove_debuff(arr.target_id,142); remove_debuff(arr.target_id,272); if step_duration[arr.target_id] then step_duration[arr.target_id][272]=0 end
-                elseif pid == 146 then remove_debuff(arr.target_id,146); remove_debuff(arr.target_id,242); if step_duration[arr.target_id] then step_duration[arr.target_id][242]=0 end
-                elseif T{386,387,388,389,390}:contains(pid) then remove_debuff(arr.target_id,201); if step_duration[arr.target_id] then step_duration[arr.target_id][201]=0 end
-                elseif T{391,392,393,394,395}:contains(pid) then remove_debuff(arr.target_id,202); if step_duration[arr.target_id] then step_duration[arr.target_id][202]=0 end
-                elseif T{396,397,398,399,400}:contains(pid) then remove_debuff(arr.target_id,203); if step_duration[arr.target_id] then step_duration[arr.target_id][203]=0 end
-                elseif T{448,449,450,451,452}:contains(pid) then remove_debuff(arr.target_id,312); if step_duration[arr.target_id] then step_duration[arr.target_id][312]=0 end
-                else remove_debuff(arr.target_id, pid) end
-            else
-                remove_debuff(arr.target_id, pid)
-            end
-        end
+    local mid, tid = arr.message_id, arr.target_id
+    if CLEAR_MSG:contains(mid) then
+        if is_enemy(tid) then clear_target_debuffs(tid, {no_hint=true}); TH[tid]=nil end
+        return
+    end
+    if not (WEAR_MSG:contains(mid) and is_enemy(tid)) then return end
+
+    local pid = arr.param_1
+    if mid == 206 then
+        local pairs_map = {
+            [136]={136,266}, [137]={137,267}, [138]={138,268}, [139]={139,269},
+            [140]={140,270}, [141]={141,271}, [142]={142,272}, [146]={146,242},
+        }
+        local pair = pairs_map[pid]
+        if pair then
+            for _,e in ipairs(pair) do _rm(tid, e) end
+        elseif pid>=386 and pid<=390 then _rm(tid,201)
+        elseif pid>=391 and pid<=395 then _rm(tid,202)
+        elseif pid>=396 and pid<=400 then _rm(tid,203)
+        elseif pid>=448 and pid<=452 then _rm(tid,312)
+        else _rm(tid, pid) end
+    else
+        _rm(tid, pid)
     end
 end
 
 windower.register_event('logout','zone change', function()
     debuffed_mobs = {}
     TH = {}
+    ws_links = {}
     player = windower.ffxi.get_player()
 end)
 
@@ -676,28 +921,59 @@ windower.register_event('incoming chunk', function(id, data)
         inc_action_message(arr)
     elseif id == 0x00E then
         local packet = packets.parse('incoming', data)
-        if TH[packet['NPC']] and packet['Status'] == 0 and packet['HP %'] == 100 then TH[packet['NPC']] = nil end
+        if TH[packet['NPC']] and packet['Status'] == 0 and packet['HP %'] == 0 then TH[packet['NPC']] = nil end
     end
 end)
 
 windower.register_event('prerender', function()
     local curr = os.clock()
-    if curr > frame_time + 0.1 then frame_time = curr; update_box() end
+    if curr > frame_time + 0.1 then
+        frame_time = curr
+        local party = windower.ffxi.get_party() or {}
+        for _, slot in pairs(party) do
+            if type(slot)=='table' and slot.mob and slot.mob.id and slot.tp then
+                last_tp_by_id[slot.mob.id] = slot.tp
+            end
+        end
+        update_box()
+    end
 end)
 
 windower.register_event('load','login', function()
     if not windower.dir_exists(windower.addon_path..'data\\') then windower.create_dir(windower.addon_path..'data\\') end
-    local durationsFile = file.new('data\\durations.xml', true)
-    if not file.exists('data\\durations.xml') then durationsFile:write(default_durations_xml) end
-    durations = config.load('data\\durations.xml')
-
-    local profilesFile = file.new('data\\duration_profiles.xml', true)
-    if not file.exists('data\\duration_profiles.xml') then profilesFile:write(default_profiles_xml) end
-    duration_profiles = config.load('data\\duration_profiles.xml')
 
     local info = windower.ffxi.get_info(); if not info.logged_in then return end
     player = windower.ffxi.get_player()
     owner_key = (player and player.name and player.name:lower()) or 'unknown'
+
+    if not windower.dir_exists(windower.addon_path..user_dir()) then windower.create_dir(windower.addon_path..user_dir()) end
+
+    migrate_legacy('data\\durations.xml',          path_durations())
+    migrate_legacy('data\\duration_profiles.xml',  path_profiles())
+    migrate_legacy('data\\creates.xml',            path_creates())
+    migrate_legacy('data\\settings.xml',           path_settings())
+
+    if not file.exists(path_settings()) then
+        local s = config.load(defaults)
+        config.save(s, path_settings())
+    end
+    settings = config.load(path_settings(), defaults)
+
+    if not file.exists(path_durations()) then
+        file.new(path_durations(), true):write('<?xml version="1.0"?><settings></settings>')
+    end
+    durations = config.load(path_durations()) or {}
+
+    if not file.exists(path_profiles()) then
+        file.new(path_profiles(), true):write('<?xml version="1.0"?><settings></settings>')
+    end
+    duration_profiles = config.load(path_profiles()) or {}
+
+    CREATE_FILE = path_creates()
+    if not file.exists(CREATE_FILE) then
+        file.new(CREATE_FILE, true):write('<?xml version="1.0"?><settings></settings>')
+    end
+    creates = config.load(CREATE_FILE) or {}
 
     durations[owner_key] = durations[owner_key] or {}
     if durations[owner_key].global and not durations[owner_key].spells then
@@ -707,13 +983,11 @@ windower.register_event('load','login', function()
 
     duration_profiles[owner_key] = duration_profiles[owner_key] or {}
     duration_profiles[owner_key].profiles = duration_profiles[owner_key].profiles or {}
-
-    -- normalize profiles to lowercase keys, preserve display label, migrate global->spells
     do
         local store = duration_profiles[owner_key].profiles or {}
         local new_store = {}
         for k, v in pairs(store) do
-            local nk = _norm_key(k)
+            local nk = (tostring(k or ''):lower())
             local entry = type(v) == 'table' and v or {}
             entry.spells = entry.spells or entry.global or {}
             entry.global = nil
@@ -741,16 +1015,6 @@ windower.register_event('addon command', function(...)
     player = windower.ffxi.get_player()
     if not player then return end
 
-    local function _trim(s) return (s or ''):match('^%s*(.-)%s*$') end
-    local function _auto(s) return (s and s ~= '' and windower and windower.convert_auto_trans) and windower.convert_auto_trans(s) or s end
-    local function _unwrap_token(s)
-        s = _trim(s or ''); if s == '' then return s end
-        local first,last = s:sub(1,1), s:sub(-1); local pairs = {['\"']='\"', ['{']='}', ['[']=']', ['<']='>'}
-        if pairs[first] and last == pairs[first] then return s:sub(2, -2) end
-        return s
-    end
-    local function _norm(s) return (_auto(_unwrap_token(s or '')):lower():gsub('[%s%p]+','')) end
-
     local function set_toggle(key, val)
         if val == nil then settings[key] = not settings[key]
         else
@@ -759,7 +1023,8 @@ windower.register_event('addon command', function(...)
             elseif v == 'off' or v == 'false' or v == '0' then settings[key] = false
             else settings[key] = not settings[key] end
         end
-        config.save(settings); log(key..' is now: '..tostring(settings[key]))
+        config.save(settings)
+        log(key..' is now: '..tostring(settings[key]))
     end
 
     local function normalize_name(n) n=tostring(n or ''):gsub('^%s+',''):gsub('%s+$',''); return n~='' and n or nil end
@@ -788,13 +1053,15 @@ windower.register_event('addon command', function(...)
 
     if not commands or not commands[1] then
         log('Invalid command:')
-        log('//df|debuffing colors|timer [on|off]')
-        log('//df|debuffing auto [on|off]')
-        log('//df|debuffing auto_profiles [on|off]')
-        log('//df|debuffing keep_buff [on|off]')
-        log('//df|debuffing {Spell Name}|ID [seconds|remove]')
+        log('//df colors|timer [on|off]')
+        log('//df auto [on|off]')
+        log('//df auto_profiles [on|off]')
+        log('//df keep_buff [on|off]')
+        log('//df {Spell Name}|ID [seconds|remove]')
         log('//df save <name> | //df load <name> | //df list | //df delete <name>')
         log('//df reset | //df test clear | //df clear')
+        log('//df create <WS|id> <Buff|id> <sec, sec, sec>')
+        log('//df weapons [on|off]')
         return
     end
 
@@ -826,6 +1093,14 @@ windower.register_event('addon command', function(...)
 
     elseif cmd == 'timer' then
         set_toggle('timers_enabled', commands[2])
+
+    elseif cmd == 'weapons' then
+        local v = tostring(commands[2] or ''):lower()
+        if     v == 'on'  or v == 'true' or v == '1' then settings.weapons = true
+        elseif v == 'off' or v == 'false'or v == '0' then settings.weapons = false
+        else settings.weapons = not settings.weapons end
+        config.save(settings)
+        log('Weapon skills now: '..(settings.weapons and 'visible' or 'hidden'))
 
     elseif cmd == 'reset' then
         durations[owner_key] = durations[owner_key] or {}; durations[owner_key].spells = {}; config.save(durations, 'all')
@@ -861,20 +1136,41 @@ windower.register_event('addon command', function(...)
         if count == 0 then log('No profiles saved') end
 
     elseif cmd == 'delete' then
-        local name = normalize_name(table.concat(commands, ' ', 2)); if not name then return log('Usage: //df delete <name>') end
+        local raw = normalize_name(table.concat(commands, ' ', 2))
+        if not raw then return log('Usage: //df delete <profile name | WS name | WS id>') end
+
+        do
+            local wsid
+            local n = tonumber(raw)
+            if n and res.weapon_skills[n] then
+                wsid = n
+            else
+                wsid = select(1, resolve_ws_id(raw))
+            end
+            if wsid and creates[tostring(wsid)] then
+                local label = (res.weapon_skills[wsid] and res.weapon_skills[wsid].en) or tostring(wsid)
+                creates[tostring(wsid)] = nil
+                config.save(creates, CREATE_FILE)
+                log('Deleted '..label)
+                return
+            end
+        end
+
         _ensure_profile_tables()
         local store = duration_profiles[owner_key].profiles
-        local key = _resolve_profile_key(name)
-        if not store[key] then return log('Profile '..name..' not found') end
+        local key = _resolve_profile_key(raw)
+        if not store[key] then return log('Profile "'..raw..'" not found') end
         local label = store[key].label or key
-        store[key] = nil; config.save(duration_profiles, 'all'); log('Deleted '..label..' profile.')
+        store[key] = nil
+        config.save(duration_profiles, 'all')
+        log('Deleted '..label..' profile.')
 
     elseif cmd == 'test' then
         if tostring(commands[2] or ''):lower() == 'clear' then
             local self_id = player.id; simulation_mode = false; clear_target_debuffs(self_id, { no_hint = true }); log('Test debuffs cleared'); return
         end
 
-        if #commands < 2 then log('Invalid command: //df test [spell name|id] [damage|remove]'); return end
+        if #commands < 2 then log('Invalid command: //df test [spell|ws name|id] [damage|tp|remove]'); return end
         local last_is_remove = (commands[#commands] and tostring(commands[#commands]):lower() == 'remove')
         local name_end = last_is_remove and (#commands - 1) or #commands
 
@@ -883,7 +1179,7 @@ windower.register_event('addon command', function(...)
             local tok = _auto(_unwrap_token(tostring(commands[i] or '')))
             local n = tonumber(tok); if n then nums[#nums+1] = n else name_parts[#name_parts+1] = tok end
         end
-        local dmg_val = (#name_parts > 0 and nums[1]) or nil
+        local dmg_or_tp_val = (#name_parts > 0 and nums[1]) or nil
         local raw_query = (#name_parts > 0) and table.concat(name_parts, ' ') or table.concat(commands, ' ', 2, name_end)
 
         local sid, sname
@@ -891,7 +1187,6 @@ windower.register_event('addon command', function(...)
         if idq and res.spells[idq] then sid,sname = idq, res.spells[idq].en
         elseif idq and others and others.blue_magic and others.blue_magic[idq] then sid,sname = idq, others.blue_magic[idq].en
         else sid,sname = resolve_spell_id(raw_query) end
-        if not sid then log('Spell not found: incorrect spell name/id.'); return end
 
         local self_id = player.id; simulation_mode = true; debuffed_mobs[self_id] = debuffed_mobs[self_id] or {}
 
@@ -899,8 +1194,25 @@ windower.register_event('addon command', function(...)
             for eff, ent in pairs(debuffed_mobs[self_id]) do
                 if type(ent) == 'table' and (ent.id == sid or ent.name == sname) then remove_debuff(self_id, eff, { no_hint = true }) end
             end
-            log('Removed test debuff: '..sname); return
+            for eff, ent in pairs(debuffed_mobs[self_id]) do
+                if type(ent) == 'table' and ent.ws_display and tostring(ent.name):find(sname or '', 1, true) then
+                    debuffed_mobs[self_id][eff] = nil
+                end
+            end
+            log('Removed test debuff: '..(sname or tostring(sid or 'unknown'))); return
         end
+
+        do
+            local wsid, wsname = resolve_ws_id(raw_query)
+            local tp_override = tonumber(dmg_or_tp_val)
+            if wsid and creates[tostring(wsid)] then
+                if tp_override and tp_override >= 1000 then last_tp_by_id[self_id] = math.min(3000, tp_override) end
+                apply_create(self_id, self_id, wsid, {force=true})
+                return
+            end
+        end
+
+        if not sid then log('Spell not found: incorrect spell name/id.'); return end
 
         local bm = others and others.blue_magic and others.blue_magic[sid]
         local duration = (durations[owner_key] and durations[owner_key].spells and durations[owner_key].spells[tostring(sid)])
@@ -916,7 +1228,7 @@ windower.register_event('addon command', function(...)
             if type(e) == 'table' then for _, v in pairs(e) do apply_debuff(tgt, v, spell, dur); mark_no_hint(debuffed_mobs[tgt], v) end
             else
                 apply_debuff(tgt, e, spell, dur); mark_no_hint(debuffed_mobs[tgt], e)
-                if map == EXTREMES and spell == 502 and dmg_val then kaustra_store_dmg(tgt, e, dmg_val) end
+                if map == EXTREMES and spell == 502 and dmg_or_tp_val then kaustra_store_dmg(tgt, e, dmg_or_tp_val) end
             end
         end
 
@@ -924,9 +1236,9 @@ windower.register_event('addon command', function(...)
             local status_id = (bm and bm.status) or s.status
             apply_debuff(self_id, status_id, sid, duration)
             for eff, ent in pairs(debuffed_mobs[self_id]) do if type(ent) == 'table' and ent.id == sid then ent.no_hint = true end end
-            if dmg_val then
-                if is_helix_id(sid) then helix_store_dmg(self_id, status_id, dmg_val, sid)
-                elseif sid == 502 then kaustra_store_dmg(self_id, status_id, dmg_val) end
+            if dmg_or_tp_val then
+                if is_helix_id(sid) then helix_store_dmg(self_id, status_id, dmg_or_tp_val, sid)
+                elseif sid == 502 then kaustra_store_dmg(self_id, status_id, dmg_or_tp_val) end
             end
         elseif debuffs_map[sid] then
             apply_map_effects_local(debuffs_map, self_id, sid, duration)
@@ -944,6 +1256,51 @@ windower.register_event('addon command', function(...)
         for _,tid in ipairs(ids) do clear_target_debuffs(tid, { no_hint = true }) end
         simulation_mode = false; log('All debuffs cleared')
 
+    elseif cmd == 'create' then
+        if #commands < 4 then
+            log('Examples (auto-translate OK):')
+            log('          //df create "Shell Crusher" "Defense Down" 180, 360, 540')
+            log('          //df create "Tachi: Gekko" Silence 45')
+            return
+        end
+
+        local ws_tok   = _auto(_unwrap_token(tostring(commands[2] or '')))
+        local buff_tok = _auto(_unwrap_token(tostring(commands[3] or '')))
+        do
+            local alias = BUFF_ALIASES[(buff_tok or ''):lower()]
+            if alias then buff_tok = alias end
+        end
+
+        local wsid,  wsname   = resolve_ws_id(ws_tok)
+        if not wsid then return log('Weapon skill not found.') end
+        local buffid,buffname = resolve_buff_id(buff_tok)
+        if not buffid then return log('Buff not found.') end
+
+		local dur_raw = table.concat(commands, ' ', 4)
+		local d1, d2, d3 = dur_raw:match('^%s*(%-?%d+)%s*,%s*(%-?%d+)%s*,%s*(%-?%d+)%s*$')
+		local is_tuple = true
+		if not d1 then
+			local single = dur_raw:match('^%s*(%-?%d+)%s*$')
+			single = single and tonumber(single)
+			if not single or single < 0 then return log('Invalid duration(s).') end
+			single = math.floor(single + 0.5)
+			d1, d2, d3 = single, single, single
+			is_tuple = false
+		else
+			d1, d2, d3 = tonumber(d1), tonumber(d2), tonumber(d3)
+			if not(d1 and d2 and d3) or d1 < 0 or d2 < 0 or d3 < 0 then return log('Invalid duration tuple.') end
+			d1, d2, d3 = math.floor(d1 + 0.5), math.floor(d2 + 0.5), math.floor(d3 + 0.5)
+		end
+
+		creates[tostring(wsid)] = { buff_id = buffid, durs = { [1000]=d1, [2000]=d2, [3000]=d3 } }
+		config.save(creates, CREATE_FILE)
+
+		if is_tuple then
+			log(('Created: %s     (%s)     [%d, %d, %d]'):format(wsname, buffname, d1, d2, d3))
+		else
+			log(('Created: %s     (%s)     %d seconds'):format(wsname, buffname, d1))
+		end
+
     else
         if #commands <= 1 then log('Invalid command: //df {Spell Name}|ID [seconds|remove]'); return end
         durations[owner_key] = durations[owner_key] or {}; durations[owner_key].spells = durations[owner_key].spells or {}
@@ -951,6 +1308,7 @@ windower.register_event('addon command', function(...)
         local sid, sname = resolve_spell_id(raw_query); if not sid then log('Spell not found: incorrect spell name/id or outdated resources'); return end
         local last = tostring(commands[#commands] or ''):lower(); local secs = tonumber(last)
         if secs and secs >= 0 then
+            secs = math.floor(secs + 0.5)
             durations[owner_key].spells[tostring(sid)] = secs; config.save(durations, 'all')
             _sync_profile(sid, secs)
             log('Global duration for '..sname..' set to '..secs..' seconds')
