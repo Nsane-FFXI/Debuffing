@@ -7,9 +7,11 @@ Left Default Profile, Right Custom Profile, was made for saboteur.
 <img width="272" height="227" alt="3" src="https://github.com/user-attachments/assets/12f4d834-6976-4050-ad9c-c2a4c560d81c" />
 <img width="271" height="190" alt="4" src="https://github.com/user-attachments/assets/f8647336-42bf-4b38-bac0-2194d5dcf5d8" />
 
+Some debuffs not showned.
+
 <img width="318" height="95" alt="5" src="https://github.com/user-attachments/assets/e1f2825c-4054-4ee2-88e5-ed580ccf0638" />
 
-Some debuffs not showned.
+Weapon Skill debuffs need be added manually, see commands below.
 
 
 
