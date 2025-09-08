@@ -132,8 +132,8 @@ If testing Kaustra/Helix spell, you can simulate DMG by including a number anywh
     //df test 99999 {Kaustra}
     //df test {Kaustra} 99999
 
+    //df test "Teachi: Gekko"
     //df test {Shell Crusher} 2000
-
 ```
 
 ---
