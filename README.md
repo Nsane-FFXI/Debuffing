@@ -196,26 +196,26 @@ Remove all global duration overrides for your current character (profiles untouc
 
 ---
 
-## CHEAT SHEET
+# Debuffing Addon Command Reference
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| //df {Spell}|ID <sec> | Set duration override | //df {Paralyze} 180 |
-| //df {Spell}|ID remove | Remove override | //df 58 remove |
-| //df keep_buff | Toggle expired buff display | //df keep_buff |
-| //df auto on|off | Toggle auto-learn durations | //df auto on |
-| //df auto_profiles on|off | Per-job profiles | //df auto_profiles on |
-| //df colors on|off | Toggle colored names | //df colors off |
-| //df timer on|off | Toggle timer display | //df timer on |
-| //df weapons on|off | Show/hide WS rows | //df weapons off |
-| //df create <WS> <Buff> <sec[,sec,sec]> | Create WS rule | //df create "Shell Crusher" "Defense Down" 180,360,540 |
-| //df delete <WS> | Delete WS rule | //df delete "Shell Crusher" |
-| //df test {Spell} | Apply test debuff | //df test {Kaustra} |
-| //df test {Spell} remove | Remove test debuff | //df test {Kaustra} remove |
-| //df test clear | Clear test debuffs | //df test clear |
-| //df clear | Clear all debuffs from UI | //df clear |
-| //df save <name> | Save profile | //df save WHM |
-| //df load <name> | Load profile | //df load WHM |
-| //df list | List profiles | //df list |
-| //df delete <name> | Delete profile | //df delete WHM |
-| //df reset | Reset overrides | //df reset |
+| Command | Function | Example |
+|---------|----------|---------|
+| `//df {Spell}\|ID <sec>` | Set duration override | `//df Paralyze 180` |
+| `//df {Spell}\|ID remove` | Remove override | `//df 58 remove` |
+| `//df keep_buff` | Toggle expired buff display | `//df keep_buff` |
+| `//df auto on\|off` | Toggle auto-learn durations | `//df auto on` |
+| `//df auto_profiles on\|off` | Per-job profiles | `//df auto_profiles on` |
+| `//df colors on\|off` | Toggle colored names | `//df colors off` |
+| `//df timer on\|off` | Toggle timer display | `//df timer on` |
+| `//df weapons on\|off` | Show/hide WS rows | `//df weapons off` |
+| `//df create <WS> <Buff> <sec, sec, sec>` | Create WS rule | `//df create "Shell Crusher" "Defense Down" 180, 360, 540` |
+| `//df delete <WS>` | Delete WS rule | `//df delete "Shell Crusher"` |
+| `//df test {Spell}` | Apply test debuff | `//df test Kaustra` |
+| `//df test {Spell} remove` | Remove test debuff | `//df test Kaustra remove` |
+| `//df test clear` | Clear test debuffs | `//df test clear` |
+| `//df clear` | Clear all debuffs from UI | `//df clear` |
+| `//df save <name>` | Save profile | `//df save WHM` |
+| `//df load <name>` | Load profile | `//df load WHM` |
+| `//df list` | List profiles | `//df list` |
+| `//df delete <name>` | Delete profile | `//df delete WHM` |
+| `//df reset` | Reset overrides | `//df reset` |
