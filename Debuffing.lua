@@ -1,6 +1,6 @@
 _addon.name='Debuffing'
 _addon.author='original: Auk, Overhauled by Nsane'
-_addon.version='2025.9.8'
+_addon.version='2025.9.12'
 _addon.commands={'df','debuffing'}
 
 require('luau')
@@ -653,26 +653,54 @@ local function inc_action(act)
                 end
             end
         end
-    elseif act.category==14 then
-        if not is_ally(act.actor_id) then return end
-        for i=1,#act.targets do
-            if T{519,520,521,591}:contains(act.targets[i].actions[1].message) then
-                local target=act.targets[i].id
-                if is_enemy(target) then
-                    local effect=act.param; local tier=act.targets[i].actions[1].param
-                    step_duration[target]=step_duration[target] or {}
-                    if tier==1 or not step_duration[target][effect] then
-                        step_duration[target][effect]=os.clock()+60
-                    elseif step_duration[target][effect]-os.clock()>=90 then
-                        step_duration[target][effect]=os.clock()+120
-                    else
-                        step_duration[target][effect]=os.clock()+math.max(30,step_duration[target][effect]-os.clock()+30)
-                    end
-                    debuffed_mobs[target]=debuffed_mobs[target] or {}
-                    debuffed_mobs[target][effect]={name=res.job_abilities[effect].en.." lv."..tier,timer=step_duration[target][effect],base_dur=0,expired_at=nil}
+elseif act.category==14 then
+    if not is_ally(act.actor_id) then return end
+    for i=1,#act.targets do
+        if T{519,520,521,591}:contains(act.targets[i].actions[1].message) then
+            local target=act.targets[i].id
+            if is_enemy(target) then
+                local effect=act.param
+                local tier=act.targets[i].actions[1].param
+                step_duration[target]=step_duration[target] or {}
+                local now=os.clock()
+                local prev=step_duration[target][effect] or 0
+                local function _is_main_job_dnc()
+                    player=windower.ffxi.get_player()
+                    if not player or not player.main_job_id then return false end
+                    local j=res.jobs[player.main_job_id]
+                    local code=j and (j.ens or j.en) or ''
+                    return code=='DNC'
                 end
+                if _is_main_job_dnc() then
+                    local BASE,INC,CAP=80,50,140
+                    local expires
+                    if tier==1 or prev<=now then
+                        expires=now+BASE
+                    else
+                        local remain=math.max(0,prev-now)
+                        local new_total=math.min(CAP, remain+INC)
+                        expires=now+new_total
+                    end
+                    step_duration[target][effect]=expires
+                else
+                    if tier==1 or prev<=now then
+                        step_duration[target][effect]=now+60
+                    elseif (prev-now)>=90 then
+                        step_duration[target][effect]=now+120
+                    else
+                        step_duration[target][effect]=now+math.max(30,(prev-now)+30)
+                    end
+                end
+                debuffed_mobs[target]=debuffed_mobs[target] or {}
+                debuffed_mobs[target][effect]={
+                    name=res.job_abilities[effect].en.." lv."..tier,
+                    timer=step_duration[target][effect],
+                    base_dur=0,
+                    expired_at=nil
+                }
             end
         end
+    end
     elseif act.category==15 then
         if not is_ally(act.actor_id) then return end
         if T{372,375}:contains(act.param) and T{320,672}:contains(act.targets[1].actions[1].message) then
