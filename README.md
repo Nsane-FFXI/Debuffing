@@ -48,6 +48,25 @@ Toggle showing expired debuffs with a green +seconds counter.
 
 ---
 
+## OVERTIME TIMER
+Show or hide the +seconds counter while a kept debuff is expired.  
+Requires `keep_buff` enabled.
+
+```
+ //df overtime on | off
+```
+
+---
+
+## LOGGING
+Toggle addon chat logging for actions and hints.
+
+```
+ //df log on | off
+```
+
+---
+
 ## AUTO-LEARN DURATIONS
 Automatically update the override instead of hinting when a kept debuff vanishes.
 
@@ -203,6 +222,8 @@ Remove all global duration overrides for your current character (profiles untouc
 | `//df {Spell}\|ID <sec>` | Set duration override | `//df Paralyze 180` |
 | `//df {Spell}\|ID remove` | Remove override | `//df 58 remove` |
 | `//df keep_buff` | Toggle expired buff display | `//df keep_buff` |
+| `//df overtime on\|off` | Toggle +seconds overtime counter | `//df overtime on` |
+| `//df log on\|off` | Toggle chat logging | `//df log off` |
 | `//df auto on\|off` | Toggle auto-learn durations | `//df auto on` |
 | `//df auto_profiles on\|off` | Per-job profiles | `//df auto_profiles on` |
 | `//df colors on\|off` | Toggle colored names | `//df colors off` |
@@ -219,3 +240,5 @@ Remove all global duration overrides for your current character (profiles untouc
 | `//df list` | List profiles | `//df list` |
 | `//df delete <name>` | Delete profile | `//df delete WHM` |
 | `//df reset` | Reset overrides | `//df reset` |
+//df delete <name>	Delete profile	//df delete WHM
+//df reset	Reset overrides	//df reset
