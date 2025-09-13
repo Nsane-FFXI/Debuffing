@@ -1,6 +1,6 @@
 _addon.name='Debuffing'
 _addon.author='original: Auk, Overhauled by Nsane'
-_addon.version='2025.9.12'
+_addon.version='2025.9.13'
 _addon.commands={'df','debuffing'}
 
 require('luau')
@@ -11,12 +11,11 @@ local config=require('config')
 
 local res,windower=res,windower
 local player,simulation_mode=nil,false
+local last_main_job_id=nil
 local owner_key='unknown'
 local others=require('others')
 
-local function log(msg) windower.add_to_chat(207,('[Debuffing] %s'):format(tostring(msg))) end
-
-local defaults={keep_buff_after_timer=false,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
+local defaults={keep_buff_after_timer=true,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,logging_enabled=false,overtime_enabled=false,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
 local CREATE_FILE=nil
 local settings=config.load(defaults)
 
@@ -116,9 +115,9 @@ local function _apply_job_profile()
     store[key].label=store[key].label or pname
     if store[key].spells then
         durations[owner_key].spells=_deepcopy(store[key].spells)
-        log('Auto profile loaded: '..(store[key].label or key))
+        log('Loaded '..(store[key].label or key)..' Profile')
     else
-        log('Auto profile new: '..(store[key].label or key))
+        log('Created '..(store[key].label or key)..' Profile')
     end
     config.save(duration_profiles,'all')
     config.save(durations,'all')
@@ -131,6 +130,13 @@ local function _sync_profile(spell_id,secs_or_nil)
     if secs_or_nil==nil then store[current_profile].spells[tostring(spell_id)]=nil
     else store[current_profile].spells[tostring(spell_id)]=secs_or_nil end
     config.save(duration_profiles,'all')
+end
+
+local logging_enabled=true
+local function log(msg)
+    if settings.logging_enabled then
+        windower.add_to_chat(207,('[Debuffing] %s'):format(tostring(msg)))
+    end
 end
 
 local function color_by_element(name,spell_id)
@@ -271,6 +277,7 @@ local function update_box()
                 return ' : '..string.format('%.0f',remain)
             end
         else
+            if not settings.overtime_enabled then return '' end
             local up=math.max(0,os.clock()-(entry.expired_at or os.clock()))
             if is_kaustra(entry) then
                 local upticks=math.floor(up/3)
@@ -371,6 +378,7 @@ local function update_box()
     end
     box.current_string=current_string
 end
+
 
 local function handle_overwrites(target,new_spell_id,overwrites_list)
     if not debuffed_mobs[target] then return true end
@@ -818,8 +826,9 @@ end)
 windower.register_event('load','login',function()
     if not windower.dir_exists(windower.addon_path..'data\\') then windower.create_dir(windower.addon_path..'data\\') end
     local info=windower.ffxi.get_info(); if not info.logged_in then return end
-    player=windower.ffxi.get_player()
-    owner_key=(player and player.name and player.name:lower()) or 'unknown'
+	player=windower.ffxi.get_player()
+	owner_key=(player and player.name and player.name:lower()) or 'unknown'
+	last_main_job_id = player and player.main_job_id or nil
     if not windower.dir_exists(windower.addon_path..user_dir()) then windower.create_dir(windower.addon_path..user_dir()) end
     migrate_legacy('data\\durations.xml',path_durations())
     migrate_legacy('data\\duration_profiles.xml',path_profiles())
@@ -874,8 +883,12 @@ windower.register_event('load','login',function()
     if settings.auto_profiles_enabled then _apply_job_profile() end
 end)
 
-windower.register_event('job change',function()
-    if settings.auto_profiles_enabled then _apply_job_profile() end
+windower.register_event('job change', function(main_job_id, main_job_level, sub_job_id, sub_job_level)
+    if not settings.auto_profiles_enabled then return end
+    if main_job_id ~= last_main_job_id then
+        last_main_job_id = main_job_id
+        _apply_job_profile()
+    end
 end)
 
 windower.register_event('addon command',function(...)
@@ -917,19 +930,32 @@ windower.register_event('addon command',function(...)
         return bid,bname
     end
 
-    if not commands or not commands[1] then
-        log('Invalid command:')
-        log('//df colors|timer [on|off]')
-        log('//df auto [on|off]')
-        log('//df auto_profiles [on|off]')
-        log('//df keep_buff [on|off]')
-        log('//df {Spell Name}|ID [seconds|remove]')
-        log('//df save <name> | //df load <name> | //df list | //df delete <name>')
-        log('//df reset | //df test clear | //df clear')
-        log('//df create <WS|id> <Buff|id> <sec, sec, sec>')
-        log('//df weapons [on|off]')
-        return
-    end
+	if not commands or not commands[1] then
+		windower.add_to_chat(207,'[Debuffing] Invalid command: Try...')
+		windower.add_to_chat(207,'//df colors | timer | ovetime | log | weapons | auto | auto_profiles | keep_buff - [on/off]')
+		windower.add_to_chat(207,' ')
+		windower.add_to_chat(207,'//df colors           - Toggle spell/debuff colorization.')
+		windower.add_to_chat(207,'//df timer            - Toggle timers shown next to debuffs.')
+		windower.add_to_chat(207,'//df overtime        - Show overtime (expired timers counting upward).')
+		windower.add_to_chat(207,'//df log              - Toggle addon logging messages in chat.')
+		windower.add_to_chat(207,'//df weapons        - Show or hide weapon skill related timers.')
+		windower.add_to_chat(207,'//df auto            - Auto-update durations when timers expire.')
+		windower.add_to_chat(207,'//df auto_profiles  - Auto-load job-specific profiles on main job change.')
+		windower.add_to_chat(207,'//df keep_buff      - Keep showing debuffs after timers expire.')
+		windower.add_to_chat(207,' ')
+		windower.add_to_chat(207,'//df <Spell> [seconds/remove]')
+		windower.add_to_chat(207,'//df create <Weaponskill> <Buff> <sec, sec, sec>')
+		windower.add_to_chat(207,' ')
+		windower.add_to_chat(207,'Profile Related Commands...')
+		windower.add_to_chat(207,'//df save <name> | load <name> | delete <name> | list ')
+		windower.add_to_chat(207,' ')
+		windower.add_to_chat(207,'Clearing Console Buffs...')
+		windower.add_to_chat(207,'//df reset | test clear | clear')
+		windower.add_to_chat(207,'reset       - Wipes out all custom spell durations you have set.')
+		windower.add_to_chat(207,'test clear  - Clears Works in simulation mode only.')
+		windower.add_to_chat(207,'clear       - Clears all tracked debuffs currently displayed by the addon.')
+		return
+	end
 
     local cmd=tostring(commands[1]):lower()
 
@@ -1000,7 +1026,33 @@ windower.register_event('addon command',function(...)
             log(('%s (%d)'):format((pdata and pdata.label) or k,n)); count=count+1
         end
         if count==0 then log('No profiles saved') end
-
+		
+	elseif cmd=='log' then
+		local v=tostring(commands[2] or ''):lower()
+		if v=='on' or v=='true' or v=='1' then
+			settings.logging_enabled=true
+		elseif v=='off' or v=='false' or v=='0' then
+			settings.logging_enabled=false
+		elseif v=='' then
+			settings.logging_enabled=not settings.logging_enabled
+		else
+			settings.logging_enabled=not settings.logging_enabled
+		end
+		config.save(settings)
+		windower.add_to_chat(207,('[Debuffing] Logging is now: %s'):format(tostring(settings.logging_enabled)))
+		
+	elseif cmd=='overtime' then
+		local v=tostring(commands[2] or ''):lower()
+		if v=='on' or v=='true' or v=='1' then
+			settings.overtime_enabled=true
+		elseif v=='off' or v=='false' or v=='0' then
+			settings.overtime_enabled=false
+		else
+			settings.overtime_enabled=not settings.overtime_enabled
+		end
+		config.save(settings)
+		log(('Overtime timer is now: %s'):format(tostring(settings.overtime_enabled)))
+	
     elseif cmd=='delete' then
         local raw=normalize_name(table.concat(commands,' ',2))
         if not raw then return log('Usage: //df delete <profile name | WS name | WS id>') end
