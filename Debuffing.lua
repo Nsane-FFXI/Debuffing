@@ -1,6 +1,6 @@
 _addon.name='Debuffing'
 _addon.author='original: Auk, Overhauled by Nsane'
-_addon.version='2025.9.19'
+_addon.version='2025.9.20'
 _addon.commands={'df','debuffing'}
 
 require('luau')
