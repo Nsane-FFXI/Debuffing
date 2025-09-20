@@ -15,7 +15,8 @@ local last_main_job_id=nil
 local owner_key='unknown'
 local others=require('others')
 
-local defaults={keep_buff_after_timer=true,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,logging_enabled=false,overtime_enabled=false,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
+local defaults={keep_buff_after_timer=true,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,logging_enabled=false,overtime_enabled=false,display_enabled=true,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
+
 local CREATE_FILE=nil
 local settings=config.load(defaults)
 
@@ -292,15 +293,15 @@ local function update_box()
         end
     end
 
-    local function set_box_text(s)
-        if not s or s == '' then
-            box:text('')
-            box:hide()
-        else
-            if settings.display_enabled then box:show() end
-            box:text(s)
-        end
+local function set_box_text(s)
+    if not s or s == '' then
+        box:text('')
+        box:hide()
+    else
+        box:show()
+        box:text(s)
     end
+end
 
     local current_string=''
     player=windower.ffxi.get_player()
