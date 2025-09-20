@@ -291,6 +291,17 @@ local function update_box()
             end
         end
     end
+
+    local function set_box_text(s)
+        if not s or s == '' then
+            box:text('')
+            box:hide()
+        else
+            if settings.display_enabled then box:show() end
+            box:text(s)
+        end
+    end
+
     local current_string=''
     player=windower.ffxi.get_player()
     local target=windower.ffxi.get_mob_by_target('st') or windower.ffxi.get_mob_by_target('t')
@@ -376,7 +387,7 @@ local function update_box()
     elseif simulation_mode and player and (not debuffed_mobs[player.id] or tlen(debuffed_mobs[player.id])==0) then
         simulation_mode=false
     end
-    box.current_string=current_string
+    set_box_text(current_string)
 end
 
 
