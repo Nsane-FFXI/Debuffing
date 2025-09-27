@@ -91,6 +91,21 @@ Behavior when ON:
 
 ---
 
+## IPC
+Enable or disable inter-client sync. Broadcasts the change.
+```
+Must state on | off in command, can not be toggled, will be sent across all characters.
+ //df ipc on
+ //df ipc off
+```
+
+## DISPLAY
+Show or hide the on-screen debuff box.
+```
+ //df display on
+ //df display off
+```
+
 ## UI TOGGLES
 - Colored names:   `//df colors on | off`
 - Show timers:     `//df timer on | off`
@@ -228,6 +243,9 @@ Remove all global duration overrides for your current character (profiles untouc
 | `//df auto_profiles on\|off` | Per-job profiles | `//df auto_profiles on` |
 | `//df colors on\|off` | Toggle colored names | `//df colors off` |
 | `//df timer on\|off` | Toggle timer display | `//df timer on` |
+| `//df ipc on\|off` | Toggle inter-client IPC | `//df ipc on` |
+| `//df display on\|off` | Show or hide the UI box | `//df display off` |
+| `//df status` | Print all toggle states | `//df status` |
 | `//df weapons on\|off` | Show/hide WS rows | `//df weapons off` |
 | `//df create <WS> <Buff> <sec, sec, sec>` | Create WS rule | `//df create "Shell Crusher" "Defense Down" 180, 360, 540` |
 | `//df delete <WS>` | Delete WS rule | `//df delete "Shell Crusher"` |
@@ -240,5 +258,12 @@ Remove all global duration overrides for your current character (profiles untouc
 | `//df list` | List profiles | `//df list` |
 | `//df delete <name>` | Delete profile | `//df delete WHM` |
 | `//df reset` | Reset overrides | `//df reset` |
-//df delete <name>	Delete profile	//df delete WHM
-//df reset	Reset overrides	//df reset
+
+---
+
+## STATUS
+Print current ON/OFF state of major toggles.
+```
+ //df status
+```
+Outputs include: DISPLAY, COLORS, TIMERS, OVERTIME, WEAPONS, LOGGING, IPC, KEEP_BUFF, AUTO_UPDATE, AUTO_PROFILES.
