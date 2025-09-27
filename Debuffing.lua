@@ -1,6 +1,6 @@
 _addon.name='Debuffing'
 _addon.author='original: Auk, Overhauled by Nsane'
-_addon.version='2025.9.20'
+_addon.version='2025.9.27'
 _addon.commands={'df','debuffing'}
 
 require('luau')
@@ -15,10 +15,24 @@ local last_main_job_id=nil
 local owner_key='unknown'
 local others=require('others')
 
-local defaults={keep_buff_after_timer=true,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,logging_enabled=false,overtime_enabled=false,display_enabled=true,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
-
+local defaults={keep_buff_after_timer=true,auto_update_enabled=false,auto_profiles_enabled=false,colors_enabled=true,timers_enabled=true,weapons=true,logging_enabled=false,overtime_enabled=false,ipc_enabled=false,display_enabled=true,pos={x=600,y=300},text={font='Consolas',size=12},flags={bold=false,draggable=true},bg={alpha=255}}
 local CREATE_FILE=nil
 local settings=config.load(defaults)
+
+local box = texts.new('${current_string}', settings)
+
+local function apply_display_settings()
+    if settings and settings.pos then
+        box:pos(tonumber(settings.pos.x) or 600, tonumber(settings.pos.y) or 300)
+    end
+    if settings and settings.display_enabled == false then
+        box:hide()
+    else
+        box:show()
+    end
+end
+
+apply_display_settings()
 
 local function user_dir() return 'data\\'..(owner_key or 'unknown')..'\\' end
 local function path_settings() return user_dir()..'settings.xml' end
@@ -134,10 +148,23 @@ local function _sync_profile(spell_id,secs_or_nil)
 end
 
 local logging_enabled=true
-local function log(msg)
-    if settings.logging_enabled then
+local function log(msg, force)
+    if force or settings.logging_enabled then
         windower.add_to_chat(207,('[Debuffing] %s'):format(tostring(msg)))
     end
+end
+
+local IPC_PREFIX = 'DF|'
+local function send_ipc(parts, force)
+    if not (force or settings.ipc_enabled) then return end
+    windower.send_ipc_message(IPC_PREFIX..table.concat(parts,'|'))
+end
+local function parse_ipc(msg)
+    if type(msg)~='string' then return nil end
+    if msg:sub(1,#IPC_PREFIX)~=IPC_PREFIX then return nil end
+    local body=msg:sub(#IPC_PREFIX+1)
+    local out={} for tok in body:gmatch('[^|]+') do out[#out+1]=tok end
+    return out
 end
 
 local function color_by_element(name,spell_id)
@@ -183,10 +210,36 @@ local function helix_store_dmg(tgt,effect_id,raw_param,spell_id)
     end
 end
 
+local function purge_ws_links(target_id,effect_id)
+    if ws_links[target_id] and ws_links[target_id][effect_id] then
+        for _,key in ipairs(ws_links[target_id][effect_id]) do if debuffed_mobs[target_id] then debuffed_mobs[target_id][key]=nil end end
+        ws_links[target_id][effect_id]=nil
+    end
+end
+
+local function is_alert_effect(effect)
+    local b = res.buffs[tonumber(effect)]
+    local n = b and (b.en or ''):lower() or ''
+    return n=='bind' or n=='terror' or n=='stun'
+end
+
 local function remove_debuff(target,effect,opts)
     opts=opts or {}
-    if not (debuffed_mobs[target] and debuffed_mobs[target][effect]) then return end
+    local had_ws_links = ws_links[target] and ws_links[target][effect] ~= nil
+
+    if not (debuffed_mobs[target] and debuffed_mobs[target][effect]) then
+        if had_ws_links then
+            purge_ws_links(target,effect)
+            if not opts.no_ipc and is_enemy(target) then
+                local reason = opts.reason or 'wear'
+                send_ipc({'rm', tostring(target), tostring(effect), reason})
+            end
+        end
+        return
+    end
+
     local e=debuffed_mobs[target][effect]
+
     local function maybe_hint_or_auto()
         if not e or type(e)~='table' then return end
         if not e.expired_at then return end
@@ -210,31 +263,36 @@ local function remove_debuff(target,effect,opts)
             log(('Timer hint: //df {%s} %d'):format(clean,total))
         end
     end
+
     maybe_hint_or_auto()
+
     if ws_links[target] and ws_links[target][effect] then
-        for _,key in ipairs(ws_links[target][effect]) do if debuffed_mobs[target] then debuffed_mobs[target][key]=nil end end
+        for _,key in ipairs(ws_links[target][effect]) do
+            if debuffed_mobs[target] then debuffed_mobs[target][key]=nil end
+        end
         ws_links[target][effect]=nil
     end
+
     if e and e.shot then e.shot=nil end
     debuffed_mobs[target][effect]=nil
+
+    if not opts.no_ipc and is_enemy(target) then
+        local reason = opts.reason or 'manual'
+        send_ipc({'rm', tostring(target), tostring(effect), reason})
+    end
 end
 
 local function clear_target_debuffs(tid,opts)
+    opts=opts or {}
     if not debuffed_mobs[tid] then return end
-    for eff,_ in pairs(debuffed_mobs[tid]) do remove_debuff(tid,eff,opts) end
+    for eff,_ in pairs(debuffed_mobs[tid]) do remove_debuff(tid,eff,{no_hint=true,no_ipc=true,reason=opts.reason or 'clear'}) end
     debuffed_mobs[tid]=nil
     if ws_links[tid] then ws_links[tid]=nil end
-end
-
-local function purge_ws_links(target_id,effect_id)
-    if ws_links[target_id] and ws_links[target_id][effect_id] then
-        for _,key in ipairs(ws_links[target_id][effect_id]) do if debuffed_mobs[target_id] then debuffed_mobs[target_id][key]=nil end end
-        ws_links[target_id][effect_id]=nil
+    if not opts.no_ipc and is_enemy(tid) then
+        send_ipc({'clear', tostring(tid)})
     end
 end
 
-local box=texts.new('${current_string}',settings); box:show()
-if settings and settings.pos then box:pos(tonumber(settings.pos.x) or 600,tonumber(settings.pos.y) or 300) end
 local function save_box_pos()
     local x,y=box:pos()
     settings.pos=settings.pos or {}
@@ -264,6 +322,12 @@ end
 local function tp_tier(tp_val) local tp=tonumber(tp_val or 0) or 0 if tp>=3000 then return 3000 elseif tp>=2000 then return 2000 else return 1000 end end
 
 local function update_box()
+    if settings and settings.display_enabled == false then
+        box:text('')
+        box:hide()
+        return
+    end
+
     local function fmt_timer(entry,remain,is_expired)
         if not settings.timers_enabled then return '' end
         if not is_expired then
@@ -293,19 +357,20 @@ local function update_box()
         end
     end
 
-local function set_box_text(s)
-    if not s or s == '' then
-        box:text('')
-        box:hide()
-    else
-        box:show()
-        box:text(s)
+    local function set_box_text(s)
+        if not s or s == '' then
+            box:text('')
+            box:hide()
+        else
+            box:show()
+            box:text(s)
+        end
     end
-end
 
     local current_string=''
     player=windower.ffxi.get_player()
     local target=windower.ffxi.get_mob_by_target('st') or windower.ffxi.get_mob_by_target('t')
+
     local function render_target(tid,tname)
         local now=os.clock()
         local debuff_table=debuffed_mobs[tid]
@@ -328,6 +393,11 @@ end
                     if sp.ws_display and not settings.weapons then
                     else
                         local remain=(sp.timer or 0)-now
+                        local suppress_timer = is_alert_effect(effect)
+                        if sp.ws_display and sp.link_target then
+                            suppress_timer = suppress_timer or is_alert_effect(sp.link_target)
+                        end
+
                         if remain>=0 then
                             local label
                             if sp.ws_display then
@@ -335,17 +405,15 @@ end
                             else
                                 label=JA_SPELLS:contains(sp.name) and ja_label(sp.name,sp.tier) or colorize_name(sp.name,sp.id)
                                 if not JA_SPELLS:contains(sp.name) then
-                                    if is_kaustra(sp) then
-                                        if sp.kaustra_dmg_str then label=cs(C.dark,sp.kaustra_dmg_str)..' '..label end
-                                    elseif is_helix(sp) then
-                                        if sp.helix_dmg_str then
-                                            local rgb=sp.helix_rgb or helix_rgb(sp.id)
-                                            label=cs(rgb,sp.helix_dmg_str)..' '..label
-                                        end
+                                    if is_kaustra(sp) and sp.kaustra_dmg_str then
+                                        label=cs(C.dark,sp.kaustra_dmg_str)..' '..label
+                                    elseif is_helix(sp) and sp.helix_dmg_str then
+                                        local rgb=sp.helix_rgb or helix_rgb(sp.id)
+                                        label=cs(rgb,sp.helix_dmg_str)..' '..label
                                     end
                                 end
                             end
-                            out=out..'\n- '..label..fmt_timer(sp,remain,false)
+                            out=out..'\n- '..label..(suppress_timer and '' or fmt_timer(sp,remain,false))
                         elseif settings.keep_buff_after_timer then
                             if sp.ws_display and not settings.weapons then
                             else
@@ -356,20 +424,18 @@ end
                                 else
                                     label=JA_SPELLS:contains(sp.name) and ja_label(sp.name,sp.tier) or colorize_name(sp.name,sp.id)
                                     if not JA_SPELLS:contains(sp.name) then
-                                        if is_kaustra(sp) then
-                                            if sp.kaustra_dmg_str then label=cs(C.dark,sp.kaustra_dmg_str)..' '..label end
-                                        elseif is_helix(sp) then
-                                            if sp.helix_dmg_str then
-                                                local rgb=sp.helix_rgb or helix_rgb(sp.id)
-                                                label=cs(rgb,sp.helix_dmg_str)..' '..label
-                                            end
+                                        if is_kaustra(sp) and sp.kaustra_dmg_str then
+                                            label=cs(C.dark,sp.kaustra_dmg_str)..' '..label
+                                        elseif is_helix(sp) and sp.helix_dmg_str then
+                                            local rgb=sp.helix_rgb or helix_rgb(sp.id)
+                                            label=cs(rgb,sp.helix_dmg_str)..' '..label
                                         end
                                     end
                                 end
-                                out=out..'\n- '..label..fmt_timer(sp,0,true)
+                                out=out..'\n- '..label..(suppress_timer and '' or fmt_timer(sp,0,true))
                             end
                         else
-                            remove_debuff(tid,effect)
+                            remove_debuff(tid,effect,{reason='expire'})
                         end
                     end
                 elseif sp then
@@ -381,6 +447,7 @@ end
         local has_lines=out:find('\n%- ')
         return has_lines and out or ''
     end
+
     if target and is_enemy(target.id) then
         current_string=render_target(target.id,target.name)
     elseif simulation_mode and player and debuffed_mobs[player.id] and tlen(debuffed_mobs[player.id])>0 then
@@ -388,9 +455,9 @@ end
     elseif simulation_mode and player and (not debuffed_mobs[player.id] or tlen(debuffed_mobs[player.id])==0) then
         simulation_mode=false
     end
+
     set_box_text(current_string)
 end
-
 
 local function handle_overwrites(target,new_spell_id,overwrites_list)
     if not debuffed_mobs[target] then return true end
@@ -673,54 +740,54 @@ local function inc_action(act)
                 end
             end
         end
-elseif act.category==14 then
-    if not is_ally(act.actor_id) then return end
-    for i=1,#act.targets do
-        if T{519,520,521,591}:contains(act.targets[i].actions[1].message) then
-            local target=act.targets[i].id
-            if is_enemy(target) then
-                local effect=act.param
-                local tier=act.targets[i].actions[1].param
-                step_duration[target]=step_duration[target] or {}
-                local now=os.clock()
-                local prev=step_duration[target][effect] or 0
-                local function _is_main_job_dnc()
-                    player=windower.ffxi.get_player()
-                    if not player or not player.main_job_id then return false end
-                    local j=res.jobs[player.main_job_id]
-                    local code=j and (j.ens or j.en) or ''
-                    return code=='DNC'
-                end
-                if _is_main_job_dnc() then
-                    local BASE,INC,CAP=80,50,140
-                    local expires
-                    if tier==1 or prev<=now then
-                        expires=now+BASE
-                    else
-                        local remain=math.max(0,prev-now)
-                        local new_total=math.min(CAP, remain+INC)
-                        expires=now+new_total
+    elseif act.category==14 then
+        if not is_ally(act.actor_id) then return end
+        for i=1,#act.targets do
+            if T{519,520,521,591}:contains(act.targets[i].actions[1].message) then
+                local target=act.targets[i].id
+                if is_enemy(target) then
+                    local effect=act.param
+                    local tier=act.targets[i].actions[1].param
+                    step_duration[target]=step_duration[target] or {}
+                    local now=os.clock()
+                    local prev=step_duration[target][effect] or 0
+                    local function _is_main_job_dnc()
+                        player=windower.ffxi.get_player()
+                        if not player or not player.main_job_id then return false end
+                        local j=res.jobs[player.main_job_id]
+                        local code=j and (j.ens or j.en) or ''
+                        return code=='DNC'
                     end
-                    step_duration[target][effect]=expires
-                else
-                    if tier==1 or prev<=now then
-                        step_duration[target][effect]=now+60
-                    elseif (prev-now)>=90 then
-                        step_duration[target][effect]=now+120
+                    if _is_main_job_dnc() then
+                        local BASE,INC,CAP=80,50,140
+                        local expires
+                        if tier==1 or prev<=now then
+                            expires=now+BASE
+                        else
+                            local remain=math.max(0,prev-now)
+                            local new_total=math.min(CAP, remain+INC)
+                            expires=now+new_total
+                        end
+                        step_duration[target][effect]=expires
                     else
-                        step_duration[target][effect]=now+math.max(30,(prev-now)+30)
+                        if tier==1 or prev<=now then
+                            step_duration[target][effect]=now+60
+                        elseif (prev-now)>=90 then
+                            step_duration[target][effect]=now+120
+                        else
+                            step_duration[target][effect]=now+math.max(30,(prev-now)+30)
+                        end
                     end
+                    debuffed_mobs[target]=debuffed_mobs[target] or {}
+                    debuffed_mobs[target][effect]={
+                        name=res.job_abilities[effect].en.." lv."..tier,
+                        timer=step_duration[target][effect],
+                        base_dur=0,
+                        expired_at=nil
+                    }
                 end
-                debuffed_mobs[target]=debuffed_mobs[target] or {}
-                debuffed_mobs[target][effect]={
-                    name=res.job_abilities[effect].en.." lv."..tier,
-                    timer=step_duration[target][effect],
-                    base_dur=0,
-                    expired_at=nil
-                }
             end
         end
-    end
     elseif act.category==15 then
         if not is_ally(act.actor_id) then return end
         if T{372,375}:contains(act.param) and T{320,672}:contains(act.targets[1].actions[1].message) then
@@ -775,7 +842,7 @@ local CLEAR_MSG=S{6,20,113,406,605,646}
 local WEAR_MSG=S{204,206}
 
 local function _rm(tid,eff)
-    remove_debuff(tid,eff)
+    remove_debuff(tid,eff,{reason='wear'})
     purge_ws_links(tid,eff)
     if step_duration[tid] then step_duration[tid][eff]=0 end
 end
@@ -783,7 +850,7 @@ end
 local function inc_action_message(arr)
     local mid,tid=arr.message_id,arr.target_id
     if CLEAR_MSG:contains(mid) then
-        if is_enemy(tid) then clear_target_debuffs(tid,{no_hint=true}); TH[tid]=nil end
+        if is_enemy(tid) then clear_target_debuffs(tid,{no_hint=true,reason='clear'}); TH[tid]=nil end
         return
     end
     if not (WEAR_MSG:contains(mid) and is_enemy(tid)) then return end
@@ -851,6 +918,7 @@ windower.register_event('load','login',function()
         config.save(s,path_settings())
     end
     settings=config.load(path_settings(),defaults)
+	apply_display_settings()
     if not file.exists(path_durations()) then file.new(path_durations(),true):write('<?xml version="1.0"?><settings></settings>') end
     durations=config.load(path_durations()) or {}
     if not file.exists(path_profiles()) then file.new(path_profiles(),true):write('<?xml version="1.0"?><settings></settings>') end
@@ -903,6 +971,27 @@ windower.register_event('job change', function(main_job_id, main_job_level, sub_
     end
 end)
 
+windower.register_event('ipc message', function(msg)
+    local parts=parse_ipc(msg)
+    if not parts or #parts==0 then return end
+    local op=parts[1]
+    if op=='rm' then
+        local tid=tonumber(parts[2])
+        local eff=tonumber(parts[3])
+        if tid and eff then
+            remove_debuff(tid,eff,{no_hint=true,no_ipc=true})
+        end
+    elseif op=='clear' then
+        local tid=tonumber(parts[2])
+        if tid then clear_target_debuffs(tid,{no_hint=true,no_ipc=true,reason='clear'}) end
+    elseif op=='ipc' then
+        local val=(parts[2]=='on')
+        settings.ipc_enabled=val
+        config.save(settings)
+        log('IPC is now: '..tostring(settings.ipc_enabled))
+    end
+end)
+
 windower.register_event('addon command',function(...)
     local commands=T{...}
     player=windower.ffxi.get_player()
@@ -917,7 +1006,7 @@ windower.register_event('addon command',function(...)
             else settings[key]=not settings[key] end
         end
         config.save(settings)
-        log(key..' is now: '..tostring(settings[key]))
+        log(key..' is now: '..tostring(settings[key]), true)
     end
 
     local function normalize_name(n) n=tostring(n or ''):gsub('^%s+',''):gsub('%s+$',''); return n~='' and n or nil end
@@ -944,16 +1033,19 @@ windower.register_event('addon command',function(...)
 
 	if not commands or not commands[1] then
 		windower.add_to_chat(207,'[Debuffing] Invalid command: Try...')
-		windower.add_to_chat(207,'//df colors | timer | ovetime | log | weapons | auto | auto_profiles | keep_buff - [on/off]')
+		windower.add_to_chat(207,'//df colors | timer | display | overtime | log | ipc | weapons | auto | auto_profiles | keep_buff - [on/off]')
 		windower.add_to_chat(207,' ')
 		windower.add_to_chat(207,'//df colors           - Toggle spell/debuff colorization.')
 		windower.add_to_chat(207,'//df timer            - Toggle timers shown next to debuffs.')
-		windower.add_to_chat(207,'//df overtime        - Show overtime (expired timers counting upward).')
+		windower.add_to_chat(207,'//df display          - Show or hide the display box.')
+		windower.add_to_chat(207,'//df overtime         - Show overtime (expired timers counting upward).')
 		windower.add_to_chat(207,'//df log              - Toggle addon logging messages in chat.')
-		windower.add_to_chat(207,'//df weapons        - Show or hide weapon skill related timers.')
-		windower.add_to_chat(207,'//df auto            - Auto-update durations when timers expire.')
-		windower.add_to_chat(207,'//df auto_profiles  - Auto-load job-specific profiles on main job change.')
-		windower.add_to_chat(207,'//df keep_buff      - Keep showing debuffs after timers expire.')
+		windower.add_to_chat(207,'//df ipc              - Turn on/off ipc support.')
+		windower.add_to_chat(207,'//df weapons          - Show or hide weapon skill related timers.')
+		windower.add_to_chat(207,'//df auto             - Auto-update durations when timers expire.')
+		windower.add_to_chat(207,'//df auto_profiles    - Auto-load job-specific profiles on main job change.')
+		windower.add_to_chat(207,'//df keep_buff        - Keep showing debuffs after timers expire.')
+		windower.add_to_chat(207,'//df status           - Show on/off for all toggles.')
 		windower.add_to_chat(207,' ')
 		windower.add_to_chat(207,'//df <Spell> [seconds/remove]')
 		windower.add_to_chat(207,'//df create <Weaponskill> <Buff> <sec, sec, sec>')
@@ -964,7 +1056,7 @@ windower.register_event('addon command',function(...)
 		windower.add_to_chat(207,'Clearing Console Buffs...')
 		windower.add_to_chat(207,'//df reset | test clear | clear')
 		windower.add_to_chat(207,'reset       - Wipes out all custom spell durations you have set.')
-		windower.add_to_chat(207,'test clear  - Clears Works in simulation mode only.')
+		windower.add_to_chat(207,'test clear  - Clears test debuffs in simulation mode only.')
 		windower.add_to_chat(207,'clear       - Clears all tracked debuffs currently displayed by the addon.')
 		return
 	end
@@ -976,7 +1068,7 @@ windower.register_event('addon command',function(...)
         if v=='on' or v=='true' or v=='1' then settings.keep_buff_after_timer=true
         elseif v=='off' or v=='false' or v=='0' then settings.keep_buff_after_timer=false
         else settings.keep_buff_after_timer=not settings.keep_buff_after_timer end
-        config.save(settings); log('Keep buff after timer is now: '..tostring(settings.keep_buff_after_timer))
+        config.save(settings); log('Keep buff after timer is now: '..tostring(settings.keep_buff_after_timer), true)
 
     elseif cmd=='auto' then
         local v=tostring(commands[2] or ''):lower()
@@ -984,13 +1076,33 @@ windower.register_event('addon command',function(...)
         settings.auto_update_enabled=new_auto
         settings.keep_buff_after_timer=new_auto
         config.save(settings)
-        log('Auto update is now: '..tostring(settings.auto_update_enabled))
-        log('Keep buff after timer is now: '..tostring(settings.keep_buff_after_timer))
+        log('Auto update is now: '..tostring(settings.auto_update_enabled), true)
+        log('Keep buff after timer is now: '..tostring(settings.keep_buff_after_timer), true)
 
     elseif cmd=='auto_profiles' then
         local before=settings.auto_profiles_enabled
         set_toggle('auto_profiles_enabled',commands[2])
         if settings.auto_profiles_enabled and not before then _apply_job_profile() end
+		
+    elseif cmd=='status' then
+        local function say(label, val)
+            if val then
+                windower.add_to_chat(158, ('[Debuffing] %s: ON'):format(label))
+            else
+                windower.add_to_chat(167, ('[Debuffing] %s: OFF'):format(label))
+            end
+        end
+        windower.add_to_chat(207,'[Debuffing] ---STATUS---')
+        say('DISPLAY', settings.display_enabled)
+        say('COLORS', settings.colors_enabled)
+        say('TIMERS', settings.timers_enabled)
+        say('OVERTIME', settings.overtime_enabled)
+        say('WEAPONS', settings.weapons)
+        say('LOGGING', settings.logging_enabled)
+        say('IPC', settings.ipc_enabled)
+        say('KEEP_BUFF', settings.keep_buff_after_timer)
+        say('AUTO_UPDATE', settings.auto_update_enabled)
+        say('AUTO_PROFILES', settings.auto_profiles_enabled)
 
     elseif cmd=='colors' then
         set_toggle('colors_enabled',commands[2])
@@ -998,36 +1110,40 @@ windower.register_event('addon command',function(...)
     elseif cmd=='timer' then
         set_toggle('timers_enabled',commands[2])
 
+    elseif cmd=='display' then
+        set_toggle('display_enabled',commands[2])
+        if settings.display_enabled then box:show() else box:hide() end
+
     elseif cmd=='weapons' then
         local v=tostring(commands[2] or ''):lower()
         if v=='on' or v=='true' or v=='1' then settings.weapons=true
         elseif v=='off' or v=='false'or v=='0' then settings.weapons=false
         else settings.weapons=not settings.weapons end
         config.save(settings)
-        log('Weapon skills now: '..(settings.weapons and 'visible' or 'hidden'))
+        log('Weapon skills now: '..(settings.weapons and 'visible' or 'hidden'), true)
 
     elseif cmd=='reset' then
         durations[owner_key]=durations[owner_key] or {}; durations[owner_key].spells={}; config.save(durations,'all')
-        log('All durations reverted to default.')
+        log('All durations reverted to default.', true)
 
     elseif cmd=='save' then
-        local name=normalize_name(table.concat(commands,' ',2)); if not name then return log('Usage: //df save <name>') end
+        local name=normalize_name(table.concat(commands,' ',2)); if not name then return log('Usage: //df save <name>', true) end
         _ensure_profile_tables()
         local store=duration_profiles[owner_key].profiles
         local key=_resolve_profile_key(name)
         store[key]={label=name,spells=_deepcopy(durations[owner_key].spells or {})}
         config.save(duration_profiles,'all')
         local cnt=0 for _ in pairs(store[key].spells or {}) do cnt=cnt+1 end
-        log(('Saved %s profile with %d entries.'):format(store[key].label or key,cnt))
+        log(('Saved %s profile with %d entries.'):format(store[key].label or key,cnt), true)
 
     elseif cmd=='load' then
-        local name=normalize_name(table.concat(commands,' ',2)); if not name then return log('Usage: //df load <name>') end
+        local name=normalize_name(table.concat(commands,' ',2)); if not name then return log('Usage: //df load <name>', true) end
         _ensure_profile_tables()
         local store=duration_profiles[owner_key].profiles
         local key=_resolve_profile_key(name)
-        if not store[key] then return log('Profile "'..name..'" not found.') end
+        if not store[key] then return log('Profile "'..name..'" not found.', true) end
         durations[owner_key].spells=_deepcopy(store[key].spells or {}); config.save(durations,'all')
-        log('Loaded '..(store[key].label or key)..' profile.')
+        log('Loaded '..(store[key].label or key)..' profile.', true)
 
     elseif cmd=='list' then
         _ensure_profile_tables()
@@ -1035,9 +1151,9 @@ windower.register_event('addon command',function(...)
         local count=0
         for k,pdata in pairs(store) do
             local n=0 for _ in pairs((pdata and pdata.spells) or {}) do n=n+1 end
-            log(('%s (%d)'):format((pdata and pdata.label) or k,n)); count=count+1
+            log(('%s (%d)'):format((pdata and pdata.label) or k,n), true); count=count+1
         end
-        if count==0 then log('No profiles saved') end
+        if count==0 then log('No profiles saved', true) end
 		
 	elseif cmd=='log' then
 		local v=tostring(commands[2] or ''):lower()
@@ -1063,11 +1179,23 @@ windower.register_event('addon command',function(...)
 			settings.overtime_enabled=not settings.overtime_enabled
 		end
 		config.save(settings)
-		log(('Overtime timer is now: %s'):format(tostring(settings.overtime_enabled)))
-	
+		log(('Overtime timer is now: %s'):format(tostring(settings.overtime_enabled)), true)
+
+    elseif cmd=='ipc' then
+        local v=tostring(commands[2] or ''):lower()
+        if v~='on' and v~='off' then
+            log('Usage: //df ipc on|off', true)
+            return
+        end
+        local enable=(v=='on')
+        settings.ipc_enabled=enable
+        config.save(settings)
+        log('IPC is now: '..tostring(settings.ipc_enabled), true)
+        send_ipc({'ipc', enable and 'on' or 'off'}, true)
+
     elseif cmd=='delete' then
         local raw=normalize_name(table.concat(commands,' ',2))
-        if not raw then return log('Usage: //df delete <profile name | WS name | WS id>') end
+        if not raw then return log('Usage: //df delete <profile name | WS name | WS id>', true) end
         do
             local wsid
             local n=tonumber(raw)
@@ -1076,18 +1204,18 @@ windower.register_event('addon command',function(...)
                 local label=(res.weapon_skills[wsid] and res.weapon_skills[wsid].en) or tostring(wsid)
                 creates[tostring(wsid)]=nil
                 config.save(creates)
-                log('Deleted '..label)
+                log('Deleted '..label, true)
                 return
             end
         end
         _ensure_profile_tables()
         local store=duration_profiles[owner_key].profiles
         local key=_resolve_profile_key(raw)
-        if not store[key] then return log('Profile "'..raw..'" not found') end
+        if not store[key] then return log('Profile "'..raw..'" not found', true) end
         local label=store[key].label or key
         store[key]=nil
         config.save(duration_profiles,'all')
-        log('Deleted '..label..' profile.')
+        log('Deleted '..label..' profile.', true)
 
     elseif cmd=='test' then
         if tostring(commands[2] or ''):lower()=='clear' then
@@ -1162,38 +1290,38 @@ windower.register_event('addon command',function(...)
     elseif cmd=='clear' then
         local ids={} for tid,_ in pairs(debuffed_mobs) do ids[#ids+1]=tid end
         for _,tid in ipairs(ids) do clear_target_debuffs(tid,{no_hint=true}) end
-        simulation_mode=false; log('All debuffs cleared')
+        simulation_mode=false; log('All debuffs cleared', true)
 
     elseif cmd=='create' then
         if #commands<4 then
-            log('Examples (auto-translate OK):')
-            log('          //df create "Shell Crusher" "Defense Down" 180, 360, 540')
-            log('          //df create "Tachi: Gekko" Silence 45')
+            log('Examples (auto-translate OK):', true)
+            log('          //df create "Shell Crusher" "Defense Down" 180, 360, 540', true)
+            log('          //df create "Tachi: Gekko" Silence 45', true)
             return
         end
         local ws_tok=_auto(_unwrap_token(tostring(commands[2] or '')))
         local buff_tok=_auto(_unwrap_token(tostring(commands[3] or '')))
         do local alias=BUFF_ALIASES[(buff_tok or ''):lower()]; if alias then buff_tok=alias end end
-        local wsid,wsname=resolve_ws_id(ws_tok); if not wsid then return log('Weapon skill not found.') end
-        local buffid,buffname=resolve_buff_id(buff_tok); if not buffid then return log('Buff not found.') end
+        local wsid,wsname=resolve_ws_id(ws_tok); if not wsid then return log('Weapon skill not found.', true) end
+        local buffid,buffname=resolve_buff_id(buff_tok); if not buffid then return log('Buff not found.', true) end
         local dur_raw=table.concat(commands,' ',4)
         local d1,d2,d3=dur_raw:match('^%s*(%-?%d+)%s*,%s*(%-?%d+)%s*,%s*(%-?%d+)%s*$')
         local is_tuple=true
         if not d1 then
             local single=dur_raw:match('^%s*(%-?%d+)%s*$'); single=single and tonumber(single)
-            if not single or single<0 then return log('Invalid duration(s).') end
+            if not single or single<0 then return log('Invalid duration(s).', true) end
             single=math.floor(single+0.5)
             d1,d2,d3=single,single,single
             is_tuple=false
         else
             d1,d2,d3=tonumber(d1),tonumber(d2),tonumber(d3)
-            if not(d1 and d2 and d3) or d1<0 or d2<0 or d3<0 then return log('Invalid duration tuple.') end
+            if not(d1 and d2 and d3) or d1<0 or d2<0 or d3<0 then return log('Invalid duration tuple.', true) end
             d1,d2,d3=math.floor(d1+0.5),math.floor(d2+0.5),math.floor(d3+0.5)
         end
         creates[tostring(wsid)]={buff_id=buffid,durs={[1000]=d1,[2000]=d2,[3000]=d3}}
         config.save(creates)
-        if is_tuple then log(('Created: %s     (%s)     [%d, %d, %d]'):format(wsname,buffname,d1,d2,d3))
-        else log(('Created: %s     (%s)     %d seconds'):format(wsname,buffname,d1)) end
+        if is_tuple then log(('Created: %s     (%s)     [%d, %d, %d]'):format(wsname,buffname,d1,d2,d3), true)
+        else log(('Created: %s     (%s)     %d seconds'):format(wsname,buffname,d1), true) end
 
     else
         if #commands<=1 then log('Invalid command: //df {Spell Name}|ID [seconds|remove]'); return end
@@ -1205,13 +1333,13 @@ windower.register_event('addon command',function(...)
             secs=math.floor(secs+0.5)
             durations[owner_key].spells[tostring(sid)]=secs; config.save(durations,'all')
             _sync_profile(sid,secs)
-            log('Global duration for '..sname..' set to '..secs..' seconds')
+            log('Global duration for '..sname..' set to '..secs..' seconds', true)
         elseif last=='remove' then
             durations[owner_key].spells[tostring(sid)]=nil; config.save(durations,'all')
             _sync_profile(sid,nil)
-            log('Global duration for '..sname..' removed')
+            log('Global duration for '..sname..' removed', true)
         else
-            log('Invalid time. Use a non-negative number or "remove".')
+            log('Invalid time. Use a non-negative number or "remove".', true)
         end
     end
 end)
