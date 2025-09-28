@@ -1085,14 +1085,11 @@ windower.register_event('addon command',function(...)
         if settings.auto_profiles_enabled and not before then _apply_job_profile() end
 		
     elseif cmd=='status' then
+        -- Always print to chat regardless of logging setting. No color difference for ON/OFF.
         local function say(label, val)
-            if val then
-                windower.add_to_chat(205, ('[Debuffing] %s: ON'):format(label))
-            else
-                windower.add_to_chat(11, ('[Debuffing] %s: OFF'):format(label))
-            end
+            windower.add_to_chat(207, ('[Debuffing] %s: %s'):format(label, val and 'ON' or 'OFF'))
         end
-        windower.add_to_chat(207,'[Debuffing] ---STATUS---')
+        windower.add_to_chat(207, '[Debuffing] ---STATUS---')
         say('DISPLAY', settings.display_enabled)
         say('COLORS', settings.colors_enabled)
         say('TIMERS', settings.timers_enabled)
