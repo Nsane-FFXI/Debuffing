@@ -1087,9 +1087,9 @@ windower.register_event('addon command',function(...)
     elseif cmd=='status' then
         local function say(label, val)
             if val then
-                windower.add_to_chat(158, ('[Debuffing] %s: ON'):format(label))
+                windower.add_to_chat(205, ('[Debuffing] %s: ON'):format(label))
             else
-                windower.add_to_chat(167, ('[Debuffing] %s: OFF'):format(label))
+                windower.add_to_chat(11, ('[Debuffing] %s: OFF'):format(label))
             end
         end
         windower.add_to_chat(207,'[Debuffing] ---STATUS---')
