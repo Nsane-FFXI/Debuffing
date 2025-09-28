@@ -890,7 +890,7 @@ end)
 
 windower.register_event('prerender',function()
     local curr=os.clock()
-    if curr>frame_time+0.1 then
+    if curr>frame_time+0.33 then
         frame_time=curr
         local party=windower.ffxi.get_party() or {}
         for _,slot in pairs(party) do
