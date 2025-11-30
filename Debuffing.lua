@@ -1131,11 +1131,11 @@ windower.register_event('addon command',function(...)
         pcall(function() if box and box.size then box:size(sz) end end)
         log(('Font size updated: %s'):format(sz), true)
 
-    -- Font name command: /df fontname <name>
-    elseif cmd=='fontname' then
+    -- Font name command: /df font <name>
+    elseif cmd=='font' then
         local fname = tostring(commands[2] or '')
         if fname == '' then
-            log('Usage: //df fontname <name>', true)
+            log('Usage: //df font <name>', true)
             return
         end
         settings.text = settings.text or {}
