@@ -105,7 +105,7 @@ Show or hide the on-screen debuff box.
  //df display on
  //df display off
  //df size
- //df fontname
+ //df font
 ```
 
 ## UI TOGGLES
