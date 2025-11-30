@@ -1,6 +1,6 @@
 _addon.name='Debuffing'
 _addon.author='original: Auk, Overhauled by Nsane'
-_addon.version='2025.9.27'
+_addon.version='2025.11.29'
 _addon.commands={'df','debuffing'}
 
 require('luau')
@@ -25,7 +25,15 @@ local function apply_display_settings()
     if settings and settings.pos then
         box:pos(tonumber(settings.pos.x) or 600, tonumber(settings.pos.y) or 300)
     end
-    if settings and settings.display_enabled == false then
+    if settings.text then
+        if settings.text.font and box.font then
+            pcall(function() box:font(settings.text.font) end)
+        end
+        if settings.text.size and box.size then
+            pcall(function() box:size(settings.text.size) end)
+        end
+    end
+    if settings.display_enabled == false then
         box:hide()
     else
         box:show()
@@ -1110,6 +1118,31 @@ windower.register_event('addon command',function(...)
     elseif cmd=='display' then
         set_toggle('display_enabled',commands[2])
         if settings.display_enabled then box:show() else box:hide() end
+
+    elseif cmd=='size' then
+        local sz = tonumber(commands[2])
+        if not sz then
+            log('Usage: //df size <number>', true)
+            return
+        end
+        settings.text = settings.text or {}
+        settings.text.size = sz
+        config.save(settings)
+        pcall(function() if box and box.size then box:size(sz) end end)
+        log(('Font size updated: %s'):format(sz), true)
+
+    -- Font name command: /df fontname <name>
+    elseif cmd=='fontname' then
+        local fname = tostring(commands[2] or '')
+        if fname == '' then
+            log('Usage: //df fontname <name>', true)
+            return
+        end
+        settings.text = settings.text or {}
+        settings.text.font = fname
+        config.save(settings)
+        pcall(function() if box and box.font then box:font(fname) end end)
+        log(('Font updated: %s'):format(fname), true)
 
     elseif cmd=='weapons' then
         local v=tostring(commands[2] or ''):lower()
