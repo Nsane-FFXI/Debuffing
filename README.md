@@ -244,7 +244,7 @@ Remove all global duration overrides for your current character (profiles untouc
 | `//df auto on\|off` | Toggle auto-learn durations | `//df auto on` |
 | `//df auto_profiles on\|off` | Per-job profiles | `//df auto_profiles on` |
 | `//df size` | Change Text Size | `//df size 20` |
-| `//df fontname` | Change Text Font | `//df fontname Consolas` |
+| `//df font` | Change Text Font | `//df font Consolas` |
 | `//df colors on\|off` | Toggle colored names | `//df colors off` |
 | `//df timer on\|off` | Toggle timer display | `//df timer on` |
 | `//df ipc on\|off` | Toggle inter-client IPC | `//df ipc on` |
